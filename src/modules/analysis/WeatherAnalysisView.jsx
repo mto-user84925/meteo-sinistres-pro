@@ -399,11 +399,46 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
               <p className="text-xs text-slate-900 font-bold mt-0.5">
                 {liveVigilance.bulletinText || "Statut officiel Météo-France lors de l'événement. Relevés instrumentaux certifiés ci-dessous."}
               </p>
+              {/* Phénomènes actifs — pilules colorées */}
+              {liveVigilance.aleas && liveVigilance.aleas.length > 0
+                && !liveVigilance.aleas[0].includes('normale')
+                && !liveVigilance.aleas[0].includes('particulière')
+                && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {liveVigilance.aleas.map((alea, i) => (
+                    <span key={i} className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border ${vigiConfig.badge}`}>
+                      {alea}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-          <span className="text-[10px] font-black text-slate-950 bg-white px-3 py-1.5 rounded-lg border-2 border-slate-400 shadow-xs">
-            {liveVigilance.source || "Source Météo-France"}
-          </span>
+          <div className="flex flex-col items-end gap-1.5">
+            <span className="text-[10px] font-black text-slate-950 bg-white px-3 py-1.5 rounded-lg border-2 border-slate-400 shadow-xs">
+              {liveVigilance.source || "Source Météo-France"}
+            </span>
+            {/* Lien vers le bulletin officiel Météo-France */}
+            <a
+              href={`https://vigilance.meteofrance.fr/produit/vigilance-meteorologique`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] font-bold text-sky-700 underline hover:text-sky-900 transition"
+            >
+              📄 Bulletin officiel Météo-France →
+            </a>
+            {/* Lien archive Encelade pour la date exacte */}
+            {sinistre.dateSinistre && (
+              <a
+                href={`https://vigilance.encelade.cloud/historique?date=${sinistre.dateSinistre}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-bold text-slate-600 underline hover:text-slate-900 transition"
+              >
+                🗂 Archive Encelade {sinistre.dateSinistre} →
+              </a>
+            )}
+          </div>
         </div>
       )}
 
