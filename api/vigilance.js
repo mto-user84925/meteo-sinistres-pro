@@ -67,7 +67,6 @@ export default async function handler(req, res) {
     }
 
     if (Array.isArray(echeances)) {
-      // Calcul du jour précédent (J-1) pour capturer les alertes émises la veille à 16h couvrant la nuit et le jour J
       const dObj = new Date(cleanDate);
       const prevDObj = new Date(dObj);
       prevDObj.setDate(prevDObj.getDate() - 1);
@@ -78,38 +77,48 @@ export default async function handler(req, res) {
         if (b.e.startsWith(cleanDate)) return true;
         if (b.e.startsWith(prevDate)) {
           const hour = parseInt(b.e.slice(11, 13), 10);
-          return hour >= 14; // Bulletin émis à 16h/20h couvrant la nuit du sinistre
+          return hour >= 14;
         }
         return false;
       });
 
       if (relevantBulletins.length > 0) {
+        // Tri décroissant : bulletin le plus récent en premier → plus de chance d'avoir le bon niveau dès le 1er appel
+        const sorted = [...relevantBulletins].sort((a, b) => b.e.localeCompare(a.e));
+        // Limiter à 5 bulletins max pour éviter le rate-limit Encelade depuis Vercel
+        const toScan = sorted.slice(0, 5);
+
         let maxLevel = 1;
         let activePhenos = [];
-        let selectedBulletin = relevantBulletins[0];
+        let selectedBulletin = toScan[0];
 
-        for (const b of relevantBulletins) {
+        for (const b of toScan) {
           try {
+            // Délai 100ms entre chaque requête pour ne pas déclencher le rate-limit
+            await new Promise(r => setTimeout(r, 100));
             const detRes = await fetch(`https://vigilance.encelade.cloud/historique/api/get_vigilance/${b.id}`, { headers });
-            if (detRes.ok) {
-              const det = await detRes.json();
-              const dptRows = (det.rows || []).filter(r => String(r.dpt) === formattedDept || String(r.dpt).padStart(2, '0') === formattedDept);
+            if (!detRes.ok) { console.warn(`Bulletin ${b.id}: HTTP ${detRes.status}`); continue; }
+            const text = await detRes.text();
+            let det;
+            try { det = JSON.parse(text); } catch { console.warn(`Bulletin ${b.id}: JSON parse error`); continue; }
 
-              for (const row of dptRows) {
-                const lvl = row.level || 1;
-                if (lvl > maxLevel) {
-                  maxLevel = lvl;
-                  selectedBulletin = b;
-                }
-                if (row.pheno_id && PHENO_NAMES[row.pheno_id]) {
-                  const pName = PHENO_NAMES[row.pheno_id];
-                  if (!activePhenos.includes(pName)) activePhenos.push(pName);
-                }
+            const dptRows = (det.rows || []).filter(r => String(r.dpt) === formattedDept || String(r.dpt).padStart(2, '0') === formattedDept);
+            for (const row of dptRows) {
+              const lvl = row.level || 1;
+              if (lvl > maxLevel) {
+                maxLevel = lvl;
+                selectedBulletin = b;
+              }
+              if (row.pheno_id && PHENO_NAMES[row.pheno_id]) {
+                const pName = PHENO_NAMES[row.pheno_id];
+                if (!activePhenos.includes(pName)) activePhenos.push(pName);
               }
             }
           } catch (err) {
-            console.warn(`Error reading bulletin ${b.id}:`, err);
+            console.warn(`Error reading bulletin ${b.id}:`, err.message);
           }
+          // Inutile de continuer si on est déjà en Rouge (niveau max)
+          if (maxLevel === 4) break;
         }
 
         const levelNames = { 1: 'Vert', 2: 'Jaune', 3: 'Orange', 4: 'Rouge' };
