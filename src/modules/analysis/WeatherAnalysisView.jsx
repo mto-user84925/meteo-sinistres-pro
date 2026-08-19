@@ -53,11 +53,13 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
       const end = isPeriod ? sinistre.dateFin : window3Days.end;
 
       const dept = sinistre.codePostal ? sinistre.codePostal.slice(0, 2) : '59';
-      
+
+      let currentVigilance = liveVigilance;
       try {
         const vigi = await vigilanceArchiveService.fetchLiveOrArchivedVigilance(dept, sinistre.dateSinistre || start);
         if (vigi && vigi.level) {
           setLiveVigilance(vigi);
+          currentVigilance = vigi;
         }
       } catch (e) {
         console.warn('Vigilance fallback:', e);
@@ -178,7 +180,7 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
           stationsData: results,
           analysisResult: analysis,
           insuranceDecision: decision,
-          vigilance: liveVigilance
+          vigilance: currentVigilance
         });
       }
     } catch (err) {
