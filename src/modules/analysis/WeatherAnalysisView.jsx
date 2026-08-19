@@ -417,9 +417,24 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
               )}
             </div>
           </div>
-          <span className="text-[10px] font-black text-slate-950 bg-white px-3 py-1.5 rounded-lg border-2 border-slate-400 shadow-xs">
-            {liveVigilance.source || "Source Météo-France"}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-[10px] font-black text-slate-950 bg-white px-3 py-1.5 rounded-lg border-2 border-slate-400 shadow-xs">
+              {liveVigilance.source || "Source Météo-France"}
+            </span>
+            <button
+              onClick={async () => {
+                const dept = sinistre.codePostal ? sinistre.codePostal.slice(0, 2) : '59';
+                const date = sinistre.dateSinistre || sinistre.dateDebut;
+                try {
+                  const vigi = await vigilanceArchiveService.fetchLiveOrArchivedVigilance(dept, date);
+                  if (vigi && vigi.level) setLiveVigilance(vigi);
+                } catch(e) { console.warn('Refresh vigilance:', e); }
+              }}
+              className="text-[10px] font-black text-slate-700 bg-white px-2.5 py-1 rounded-lg border border-slate-300 hover:bg-slate-50 transition cursor-pointer"
+            >
+              🔄 Recalculer
+            </button>
+          </div>
         </div>
       )}
 
