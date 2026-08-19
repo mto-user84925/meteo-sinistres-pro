@@ -15,10 +15,6 @@ export default defineConfig({
         target: 'https://public-api.meteofrance.fr/public/DPClim/v1',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api-meteo-clim/, '')
-      },
-      '/api': {
-        target: 'https://meteo-sinistres-pro.vercel.app',
-        changeOrigin: true
       }
     }
   }
