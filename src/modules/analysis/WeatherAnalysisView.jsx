@@ -130,6 +130,39 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
         }
       }
 
+      // Fallback vent : si aucune station du rayon n'a mesuré le vent (fxi = null)
+      // et que c'est un sinistre vent/orage, on ajoute la station la plus proche hors rayon
+      const needsWind = /tempête|vent|orage|rafale|grêle|grele/i.test(claimType);
+      const hasWindData = results.some(r => r.obs?.fxi != null);
+      if (needsWind && !hasWindData) {
+        const alreadyIds = results.map(r => r.id);
+        const extra = stationSelectorService.findNearestOutsideRadius(
+          sinistre.lat, sinistre.lon, 0, alreadyIds, 1
+        );
+        for (const st of extra) {
+          setProgressMsg(`Recherche vent hors rayon : ${st.name} (${st.distance} km)…`);
+          try {
+            const history = await meteoFranceClimService.fetchStationHistory(st.id, start, end, () => {});
+            let maxGust = null, maxGustHour = '', maxGustDate = '';
+            history.forEach(day => {
+              if (day.fxi != null && (maxGust === null || day.fxi > maxGust)) {
+                maxGust = day.fxi; maxGustHour = day.hxi; maxGustDate = day.date;
+              }
+            });
+            const records = stationRecordsService.getRecords(st.id, st.name, dept);
+            results.push({
+              ...st,
+              obs: { rr: null, fxi: maxGust, hxi: maxGustHour, maxGustDate, tn: null, tx: null, tampli: null },
+              history,
+              records,
+              isFallbackWind: true
+            });
+          } catch (e) {
+            console.warn('Fallback vent erreur:', e);
+          }
+        }
+      }
+
       setStationsWithData(results);
 
       const analysis = weatherAnalysisEngine.generateAnalysis(sinistre, results);
