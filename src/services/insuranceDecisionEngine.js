@@ -99,10 +99,11 @@ export const insuranceDecisionEngine = {
       ruleText = `Présence de rafales de vent ≥ ${threshold} km/h sur la période`;
       observedSummary = maxGust !== null ? `Rafale maximale observée : ${maxGust} km/h (${bestWindSt.name})` : 'Relevés anémométriques non disponibles';
 
+      const eventLabel = threshold >= 100 ? 'tempête' : (threshold >= 80 ? 'coup de vent' : 'vent fort');
       if (isFavorable) {
-        commentExpert = `L'analyse des postes météorologiques à proximité de ${commune} (${cp}) le ${dateSinistre} permet de classer cet événement en tempête. En effet, les rafales maximales mesurées par les stations Météo-France sur la zone du sinistre ont atteint ${maxGust} km/h à ${bestWindSt.name}, dépassant le seuil contractuel de garantie de ${threshold} km/h.`;
+        commentExpert = `L'analyse des postes météorologiques à proximité de ${commune} (${cp}) le ${dateSinistre} permet de classer cet événement en ${eventLabel}. En effet, les rafales maximales mesurées par les stations Météo-France sur la zone du sinistre ont atteint ${maxGust} km/h à ${bestWindSt.name}, dépassant le seuil contractuel de garantie de ${threshold} km/h.`;
       } else {
-        commentExpert = `L'analyse des postes météorologiques à proximité de ${commune} (${cp}) le ${dateSinistre} ne permet pas de classer cet événement en tempête. En effet, les rafales maximales mesurées par les stations Météo-France sur la zone du sinistre (${maxGust !== null ? maxGust + ' km/h' : 'inférieures au seuil'}) n'ont pas atteint le seuil contractuel de garantie de ${threshold} km/h.`;
+        commentExpert = `L'analyse des postes météorologiques à proximité de ${commune} (${cp}) le ${dateSinistre} ne permet pas de classer cet événement en ${eventLabel}. En effet, les rafales maximales mesurées par les stations Météo-France sur la zone du sinistre (${maxGust !== null ? maxGust + ' km/h' : 'inférieures au seuil'}) n'ont pas atteint le seuil contractuel de garantie de ${threshold} km/h.`;
       }
 
     } else if (category === 'PLUIE') {

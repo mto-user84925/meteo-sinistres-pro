@@ -400,8 +400,8 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
               >
                 {insuranceDecision.category === 'VENT' && (
                   <>
-                    <option value={80}>80 km/h (Vent fort)</option>
-                    <option value={100}>100 km/h (Tempête standard)</option>
+                    <option value={80}>80 km/h (Coup de vent)</option>
+                    <option value={100}>100 km/h (Seuil tempête standard)</option>
                     <option value={120}>120 km/h (Tempête majeure)</option>
                   </>
                 )}

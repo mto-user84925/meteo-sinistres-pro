@@ -34,15 +34,15 @@ export default function CertificatDossier3Pages({
     const w = 680, h = 210;
     const ml = 45, mr = 25, mt = 25, mb = 30;
     const pw = w - ml - mr, ph = h - mt - mb;
-    const max_w = 100;
+    const max_w = 120;
 
     const gst_pts = hours.map((r, i) => [
       ml + (i / (hours.length - 1)) * pw,
-      mt + ph - (Math.min(100, r.w_gst || 0) / max_w) * ph
+      mt + ph - (Math.min(120, r.w_gst || 0) / max_w) * ph
     ]);
     const avg_pts = hours.map((r, i) => [
       ml + (i / (hours.length - 1)) * pw,
-      mt + ph - (Math.min(100, r.w_avg || 0) / max_w) * ph
+      mt + ph - (Math.min(120, r.w_avg || 0) / max_w) * ph
     ]);
 
     const poly_gst = gst_pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
@@ -52,22 +52,22 @@ export default function CertificatDossier3Pages({
       gst_pts.map(p => `L ${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') +
       ` L ${gst_pts[gst_pts.length - 1][0].toFixed(1)},${mt + ph} Z`;
 
-    const y60 = mt + ph - (60 / max_w) * ph;
-    const y90 = mt + ph - (90 / max_w) * ph;
+    const y80 = mt + ph - (80 / max_w) * ph;
+    const y100 = mt + ph - (100 / max_w) * ph;
 
     return (
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-auto font-sans">
         <rect x={ml} y={mt} width={pw} height={ph} fill="#f8fafc" rx="6" stroke="#e2e8f0" />
         
         {/* Seuils */}
-        <line x1={ml} y1={y60} x2={ml + pw} y2={y60} stroke="#3b82f6" strokeWidth="1.2" strokeDasharray="4,3" />
-        <text x={ml + pw - 8} y={y60 - 4} fontSize="8pt" fill="#3b82f6" fontWeight="bold" textAnchor="end">Seuil coup de vent 60 km/h</text>
+        <line x1={ml} y1={y80} x2={ml + pw} y2={y80} stroke="#3b82f6" strokeWidth="1.2" strokeDasharray="4,3" />
+        <text x={ml + pw - 8} y={y80 - 4} fontSize="8pt" fill="#3b82f6" fontWeight="bold" textAnchor="end">Seuil coup de vent 80 km/h</text>
 
-        <line x1={ml} y1={y90} x2={ml + pw} y2={y90} stroke="#dc2626" strokeWidth="1.2" strokeDasharray="4,3" />
-        <text x={ml + pw - 8} y={y90 - 4} fontSize="8pt" fill="#dc2626" fontWeight="bold" textAnchor="end">Seuil tempête 90 km/h</text>
+        <line x1={ml} y1={y100} x2={ml + pw} y2={y100} stroke="#dc2626" strokeWidth="1.2" strokeDasharray="4,3" />
+        <text x={ml + pw - 8} y={y100 - 4} fontSize="8pt" fill="#dc2626" fontWeight="bold" textAnchor="end">Seuil tempête 100 km/h</text>
 
         {/* Axes Y */}
-        {[0, 20, 40, 60, 80, 100].map(val => {
+        {[0, 20, 40, 60, 80, 100, 120].map(val => {
           const y = mt + ph - (val / max_w) * ph;
           return (
             <g key={val}>
@@ -86,10 +86,11 @@ export default function CertificatDossier3Pages({
         {gst_pts.map((p, idx) => {
           const item = hours[idx];
           if (item.w_gst >= 80) {
+            const isStorm = item.w_gst >= 100;
             return (
               <g key={idx}>
-                <circle cx={p[0]} cy={p[1]} r="4" fill="#dc2626" stroke="#fff" strokeWidth="1.5" />
-                <text x={p[0]} y={p[1] - 7} fontSize="7pt" fontWeight="bold" fill="#dc2626" textAnchor="middle">{item.w_gst}</text>
+                <circle cx={p[0]} cy={p[1]} r={isStorm ? "4.5" : "3.5"} fill={isStorm ? "#dc2626" : "#f59e0b"} stroke="#fff" strokeWidth="1.5" />
+                <text x={p[0]} y={p[1] - 7} fontSize="7pt" fontWeight="bold" fill={isStorm ? "#dc2626" : "#b45309"} textAnchor="middle">{item.w_gst}</text>
               </g>
             );
           }
@@ -432,13 +433,13 @@ export default function CertificatDossier3Pages({
             </thead>
             <tbody>
               {(hourlyData && hourlyData.length > 0 ? hourlyData : []).map((r, i) => (
-                <tr key={i} className={r.w_gst >= 80 ? 'bg-rose-50 font-bold' : (i % 2 === 1 ? 'bg-slate-50/50' : '')}>
+                <tr key={i} className={r.w_gst >= 100 ? 'bg-rose-50 font-bold' : (r.w_gst >= 80 ? 'bg-amber-50 font-semibold' : (i % 2 === 1 ? 'bg-slate-50/50' : ''))}>
                   <td className="border border-slate-300 p-1 text-center font-mono font-bold">{String(r.h).padStart(2, '0')}h00</td>
                   <td className="border border-slate-300 p-1 text-center">{r.temp != null ? `${r.temp.toFixed(1)} °C` : '-'}</td>
                   <td className={`border border-slate-300 p-1 text-center ${r.rain >= 1 ? 'text-sky-700 font-bold' : ''}`}>
                     {r.rain != null ? `${r.rain.toFixed(1)} mm` : '0.0 mm'}
                   </td>
-                  <td className={`border border-slate-300 p-1 text-center ${r.w_gst >= 80 ? 'text-rose-700 font-black' : (r.w_gst >= 60 ? 'text-amber-700 font-bold' : '')}`}>
+                  <td className={`border border-slate-300 p-1 text-center ${r.w_gst >= 100 ? 'text-rose-700 font-black' : (r.w_gst >= 80 ? 'text-amber-700 font-bold' : '')}`}>
                     {r.w_gst} km/h
                   </td>
                   <td className="border border-slate-300 p-1 text-center text-sky-800">{r.w_avg} km/h</td>
