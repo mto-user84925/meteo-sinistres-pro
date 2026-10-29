@@ -106,6 +106,8 @@ export default function App() {
         onNewDossier={() => setActiveTab('new')}
         currentUser={currentUser}
         onLogout={handleLogout}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
       />
 
       <div className="flex-1 flex">
@@ -118,6 +120,8 @@ export default function App() {
               onNewDossier={() => setActiveTab('new')}
               onOpenDossier={handleOpenDossier}
               onGoToClim={() => setActiveTab('climatology')}
+              onGoToBtpAttestation={() => setActiveTab('btp-attestation')}
+              onGoToBtpChantiers={() => setActiveTab('btp-chantiers')}
             />
           )}
 
