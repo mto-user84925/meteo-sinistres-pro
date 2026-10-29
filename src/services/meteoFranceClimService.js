@@ -83,21 +83,21 @@ export const meteoFranceClimService = {
 
       const cmdUrl = `${BASE_CLIM_URL}/commande-station/quotidienne?id-station=${stationId}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;
       
+      const buildHeaders = (t) => ({
+        'Authorization': 'Bearer ' + t,
+        'apikey': t,
+        'Accept': 'application/json'
+      });
+
       let cmdResp = await fetch(cmdUrl, {
-        headers: {
-          'Authorization': 'Bearer ' + token,
-          'Accept': 'application/json'
-        }
+        headers: buildHeaders(token)
       });
 
       if (cmdResp.status === 401) {
         console.warn('[meteoFranceClimService] 401 reçu -> Rafraîchissement token...');
         token = await meteoAuth.generateToken();
         cmdResp = await fetch(cmdUrl, {
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Accept': 'application/json'
-          }
+          headers: buildHeaders(token)
         });
       }
 
@@ -120,6 +120,7 @@ export const meteoFranceClimService = {
         let fileResp = await fetch(fileUrl, {
           headers: {
             'Authorization': 'Bearer ' + token,
+            'apikey': token,
             'Accept': '*/*'
           }
         });
