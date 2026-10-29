@@ -1,18 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   HardHat, Calendar, MapPin, Wind, Droplets, Thermometer, 
-  AlertTriangle, CheckCircle2, FileCheck, Search, X, Sliders, RefreshCw, ArrowRight, Building2
+  AlertTriangle, CheckCircle2, FileCheck, Search, X, Sliders, RefreshCw, ArrowRight, Building2,
+  CloudSnow, Zap, Award
 } from 'lucide-react';
 import { geocodingService } from '../../services/geocodingService';
 import { stationSelectorService } from '../../services/stationSelectorService';
 import { meteoFranceClimService } from '../../services/meteoFranceClimService';
 import { pdfGeneratorService } from '../../services/pdfGeneratorService';
 import { btpStorageService } from '../../services/btpStorageService';
+import { BTP_CORPS_ETAT, getPresetByIdOrName, BTP_CATEGORIES } from '../../constants/btpNorms';
+import { isFrenchPublicHoliday } from '../../utils/frenchHolidays';
 import AttestationBtpPdfTemplate from './AttestationBtpPdfTemplate';
 
 const FRENCH_DAYS = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
 
 export default function BtpAttestationView({ preselectedChantier = null }) {
+  const [savedChantiers, setSavedChantiers] = useState([]);
+  const [selectedChantierId, setSelectedChantierId] = useState(preselectedChantier?.id || '');
+
+  // Formulaire chantier
   const [nomChantier, setNomChantier] = useState(preselectedChantier?.nom || '');
   const [client, setClient] = useState(preselectedChantier?.client || '');
   const [adresse, setAdresse] = useState(preselectedChantier?.adresse || '');
@@ -20,18 +27,32 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
     preselectedChantier ? { label: preselectedChantier.adresse, lat: preselectedChantier.lat, lon: preselectedChantier.lon } : null
   );
 
+  // Corps d'état / Lot BTP
+  const [selectedLotId, setSelectedLotId] = useState(() => {
+    if (preselectedChantier?.lots && preselectedChantier.lots.length > 0) {
+      const match = BTP_CORPS_ETAT.find(b => b.nom === preselectedChantier.lots[0]);
+      if (match) return match.id;
+    }
+    return 'gros_oeuvre';
+  });
+
+  const currentPreset = getPresetByIdOrName(selectedLotId);
+
   // Période par défaut : les 15 derniers jours
   const defaultEnd = new Date().toISOString().split('T')[0];
   const defaultStart = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
   const [dateDebut, setDateDebut] = useState(preselectedChantier?.dateDebut || defaultStart);
   const [dateFin, setDateFin] = useState(preselectedChantier?.dateFin || defaultEnd);
 
-  // Seuils CIBTP / Code du travail
-  const [excludeWeekends, setExcludeWeekends] = useState(true);
-  const [limitWind, setLimitWind] = useState(60);
-  const [limitRain, setLimitRain] = useState(10);
-  const [limitTemp, setLimitTemp] = useState(0);
-  const [limitHeat, setLimitHeat] = useState(34);
+  // Régime de travail et calendrier légal
+  const [regimeTravail, setRegimeTravail] = useState('ouvres'); // 'ouvres' (5j/7), 'ouvrables' (6j/7), 'calendaires' (7j/7)
+  const [excludeHolidays, setExcludeHolidays] = useState(true);
+
+  // Seuils réglementaires par corps d'état (initialisés par le preset)
+  const [limitWind, setLimitWind] = useState(currentPreset.wind);
+  const [limitRain, setLimitRain] = useState(currentPreset.rain);
+  const [limitTemp, setLimitTemp] = useState(currentPreset.tempMin);
+  const [limitHeat, setLimitHeat] = useState(currentPreset.heat);
 
   // Recherche BAN
   const [addressQuery, setAddressQuery] = useState(preselectedChantier?.adresse || '');
@@ -49,7 +70,44 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
 
   const refAttestation = 'ATT-BTP-' + Date.now().toString().slice(-6);
 
-  // Fermer la liste BAN lors d'un clic en dehors
+  // Charger la liste des chantiers
+  useEffect(() => {
+    setSavedChantiers(btpStorageService.getAll());
+  }, []);
+
+  // Synchronisation dynamique si preselectedChantier change
+  useEffect(() => {
+    if (preselectedChantier) {
+      setSelectedChantierId(preselectedChantier.id || '');
+      setNomChantier(preselectedChantier.nom || '');
+      setClient(preselectedChantier.client || '');
+      setAdresse(preselectedChantier.adresse || '');
+      setSelectedLocation({ 
+        label: preselectedChantier.adresse, 
+        lat: preselectedChantier.lat, 
+        lon: preselectedChantier.lon 
+      });
+      setAddressQuery(preselectedChantier.adresse || '');
+      if (preselectedChantier.dateDebut) setDateDebut(preselectedChantier.dateDebut);
+      if (preselectedChantier.dateFin) setDateFin(preselectedChantier.dateFin);
+
+      if (preselectedChantier.lots && preselectedChantier.lots.length > 0) {
+        const match = BTP_CORPS_ETAT.find(b => b.nom === preselectedChantier.lots[0]);
+        if (match) {
+          setSelectedLotId(match.id);
+          setLimitWind(match.wind);
+          setLimitRain(match.rain);
+          setLimitTemp(match.tempMin);
+          setLimitHeat(match.heat);
+        }
+      }
+
+      setDaysAnalysis([]);
+      setSummary(null);
+    }
+  }, [preselectedChantier]);
+
+  // Fermer la liste BAN lors d'un clic extérieur
   useEffect(() => {
     function handleClickOutside(event) {
       if (searchContainerRef.current && !searchContainerRef.current.contains(event.target)) {
@@ -86,6 +144,45 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
     setAddressSuggestions([]);
   };
 
+  // Changement de chantier dans le sélecteur
+  const handleSelectExistingChantier = (chantierId) => {
+    setSelectedChantierId(chantierId);
+    const found = savedChantiers.find(c => c.id === chantierId);
+    if (found) {
+      setNomChantier(found.nom);
+      setClient(found.client || '');
+      setAdresse(found.adresse || '');
+      setSelectedLocation({ label: found.adresse, lat: found.lat, lon: found.lon });
+      setAddressQuery(found.adresse || '');
+      if (found.dateDebut) setDateDebut(found.dateDebut);
+      if (found.dateFin) setDateFin(found.dateFin);
+      if (found.lots && found.lots.length > 0) {
+        const match = BTP_CORPS_ETAT.find(b => b.nom === found.lots[0]);
+        if (match) {
+          setSelectedLotId(match.id);
+          setLimitWind(match.wind);
+          setLimitRain(match.rain);
+          setLimitTemp(match.tempMin);
+          setLimitHeat(match.heat);
+        }
+      }
+      setDaysAnalysis([]);
+      setSummary(null);
+    }
+  };
+
+  // Changement de corps d'état -> auto-calibration des seuils
+  const handleLotChange = (lotId) => {
+    setSelectedLotId(lotId);
+    const preset = getPresetByIdOrName(lotId);
+    if (preset) {
+      setLimitWind(preset.wind);
+      setLimitRain(preset.rain);
+      setLimitTemp(preset.tempMin);
+      setLimitHeat(preset.heat);
+    }
+  };
+
   const handleRunAnalysis = async (e) => {
     if (e) e.preventDefault();
     if (!selectedLocation) {
@@ -114,9 +211,10 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
       );
 
       // Traitement jour par jour
-      const startDt = new Date(dateDebut);
-      const endDt = new Date(dateFin);
-      const curr = new Date(startDt);
+      const [sY, sM, sD] = dateDebut.split('-').map(Number);
+      const [eY, eM, eD] = dateFin.split('-').map(Number);
+      const curr = new Date(sY, sM - 1, sD, 12, 0, 0);
+      const endDt = new Date(eY, eM - 1, eD, 12, 0, 0);
 
       const days = [];
       let totalDaysWorked = 0;
@@ -125,13 +223,27 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
       let rainStops = 0;
       let freezeStops = 0;
       let heatStops = 0;
+      let snowStops = 0;
+      let stormStops = 0;
 
       while (curr <= endDt) {
         const iso = curr.toISOString().split('T')[0];
         const dayOfWeek = curr.getDay(); // 0 = Dimanche, 6 = Samedi
-        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        const holidayLabel = isFrenchPublicHoliday(curr);
 
-        if (!excludeWeekends || !isWeekend) {
+        // Filtrage des jours ouvrés / ouvrables / calendaires et jours fériés
+        let isWorkDay = true;
+        if (regimeTravail === 'ouvres' && (dayOfWeek === 0 || dayOfWeek === 6)) {
+          isWorkDay = false;
+        } else if (regimeTravail === 'ouvrables' && dayOfWeek === 0) {
+          isWorkDay = false;
+        }
+
+        if (excludeHolidays && holidayLabel) {
+          isWorkDay = false;
+        }
+
+        if (isWorkDay) {
           totalDaysWorked++;
 
           const obs = history.find(h => h.date === iso) || {};
@@ -139,29 +251,52 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
           const rr = obs.rr != null ? obs.rr : 0;
           const tn = obs.tn != null ? obs.tn : null;
           const tx = obs.tx != null ? obs.tx : null;
+          const neig = !!obs.neig;
+          const orag = !!obs.orag;
 
           let isStop = false;
           const reasons = [];
 
+          // 1. Vent violent (FXI3S >= limitWind)
           if (fxi !== null && fxi >= limitWind) {
             isStop = true;
             windStops++;
-            reasons.push(`Vent violent (Rafale ${fxi} km/h $\ge$ ${limitWind} km/h)`);
+            reasons.push(currentPreset.motifVent || `Vent violent (Rafale ${fxi} km/h ≥ ${limitWind} km/h - ${currentPreset.norme})`);
           }
+
+          // 2. Précipitations (RR >= limitRain)
           if (rr !== null && rr >= limitRain) {
             isStop = true;
             rainStops++;
-            reasons.push(`Fortes pluies (${rr} mm $\ge$ ${limitRain} mm)`);
+            reasons.push(currentPreset.motifPluie || `Fortes pluies (${rr} mm ≥ ${limitRain} mm - Sols saturés / impraticables)`);
           }
+
+          // 3. Gel sous abri (TN <= limitTemp)
           if (tn !== null && tn <= limitTemp) {
             isStop = true;
             freezeStops++;
-            reasons.push(`Gel sous abri (${tn}°C $\le$ ${limitTemp}°C)`);
+            reasons.push(currentPreset.motifGel || `Gel sous abri (${tn}°C ≤ ${limitTemp}°C - Interdiction DTU)`);
           }
+
+          // 4. Forte chaleur / Canicule (TX >= limitHeat)
           if (tx !== null && limitHeat && tx >= limitHeat) {
             isStop = true;
             heatStops++;
-            reasons.push(`Canicule extrême (${tx}°C $\ge$ ${limitHeat}°C)`);
+            reasons.push(currentPreset.motifChaleur || `Vague de chaleur (${tx}°C ≥ ${limitHeat}°C - Décret n° 2024-624 / Art. R. 4463-1)`);
+          }
+
+          // 5. Chutes de neige / Verglas
+          if (neig) {
+            isStop = true;
+            snowStops++;
+            reasons.push(`Chutes de neige / Verglas (Interdiction circulation et risque de chute en hauteur)`);
+          }
+
+          // 6. Orage / Risque foudre
+          if (orag) {
+            isStop = true;
+            stormStops++;
+            reasons.push(`Orage violent / Risque foudre (Interdiction appareils de levage & travaux en hauteur - Art. R. 4534-130)`);
           }
 
           if (isStop) {
@@ -176,6 +311,8 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
             tx,
             rain: rr,
             fxi,
+            neig,
+            orag,
             isStop,
             reason: reasons.length > 0 ? reasons.join(' • ') : 'Chantier praticable'
           });
@@ -186,7 +323,7 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
 
       setDaysAnalysis(days);
 
-      const conclusion = `L'analyse des relevés instrumentaux certifiés de la station Météo-France de référence (${refSt.name}, ${refSt.distance} km) fait ressortir ${intemperieDaysCount} journée(s) d'intempéries caractérisées sur les ${totalDaysWorked} jours ouvrés de la période du ${dateDebut} au ${dateFin}. Les dépassements observés (${windStops > 0 ? `${windStops}j vent violent, ` : ''}${rainStops > 0 ? `${rainStops}j fortes pluies, ` : ''}${freezeStops > 0 ? `${freezeStops}j gel, ` : ''}${heatStops > 0 ? `${heatStops}j canicule` : ''}) constituent des causes légitimes d'arrêt de travail et justifient la prolongation des délais contractuels conformément aux règles de la CIBTP et de l'article L. 5424-6 du Code du Travail.`;
+      const conclusion = `L'analyse des relevés instrumentaux certifiés de la station Météo-France de référence (${refSt.name}, ${refSt.distance} km) fait ressortir ${intemperieDaysCount} journée(s) d'intempéries caractérisées sur les ${totalDaysWorked} jours ouvrés de la période du ${dateDebut} au ${dateFin} pour le lot "${currentPreset.nom}". Les dépassements observés (${windStops > 0 ? `${windStops}j vent, ` : ''}${rainStops > 0 ? `${rainStops}j pluie, ` : ''}${freezeStops > 0 ? `${freezeStops}j gel, ` : ''}${heatStops > 0 ? `${heatStops}j chaleur, ` : ''}${snowStops > 0 ? `${snowStops}j neige, ` : ''}${stormStops > 0 ? `${stormStops}j orage` : ''}) constituent des causes légitimes et incontestables d'arrêt de travail au sens de la norme technique ${currentPreset.norme} et de l'article L. 5424-8 du Code du Travail, justifiant la prolongation des délais contractuels d'exécution.`;
 
       setSummary({
         totalDaysWorked,
@@ -196,6 +333,8 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
         rainStops,
         freezeStops,
         heatStops,
+        snowStops,
+        stormStops,
         expertConclusion: conclusion
       });
 
@@ -228,9 +367,27 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
             Attestation d'Intempéries BTP
           </h1>
           <p className="text-xs text-slate-500 mt-1 font-medium">
-            Module officiel d'analyse des arrêts de chantier — Conformité CIBTP & Code du Travail (Art. L. 5424-6)
+            Module officiel d'analyse des arrêts de chantier — Conformité Code du Travail (Art. L. 5424-8) & Normes DTU / CNAM
           </p>
         </div>
+
+        {/* Sélecteur de Chantier enregistré */}
+        {savedChantiers.length > 0 && (
+          <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+            <Building2 className="w-4 h-4 text-sky-600 ml-1" />
+            <span className="text-xs font-bold text-slate-700">Chantier :</span>
+            <select
+              value={selectedChantierId}
+              onChange={e => handleSelectExistingChantier(e.target.value)}
+              className="bg-white text-xs font-bold text-slate-900 px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:border-sky-500 cursor-pointer shadow-2xs"
+            >
+              <option value="">-- Sélectionner un chantier --</option>
+              {savedChantiers.map(ch => (
+                <option key={ch.id} value={ch.id}>{ch.nom} ({ch.commune})</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Formulaire de Configuration */}
@@ -294,55 +451,112 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
           </div>
         </div>
 
-        {/* Période & Option Week-ends */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+        {/* Sélecteur de Corps d'État / Lot BTP avec Norme DTU */}
+        <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Award className="w-4 h-4 text-amber-700" />
+              <label className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Corps d'État / Lot BTP & Référentiel Normatif
+              </label>
+            </div>
+            <span className="text-[10px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+              Règle Technique : {currentPreset.norme}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+            <div>
+              <select
+                value={selectedLotId}
+                onChange={e => handleLotChange(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-amber-300 text-xs font-black text-slate-950 focus:outline-none focus:border-amber-600 shadow-2xs cursor-pointer"
+              >
+                {Object.values(BTP_CATEGORIES).map(cat => (
+                  <optgroup key={cat} label={`-- ${cat.toUpperCase()} --`}>
+                    {BTP_CORPS_ETAT.filter(b => b.categorie === cat).map(lot => (
+                      <option key={lot.id} value={lot.id}>
+                        {lot.nom} ({lot.norme})
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+
+            <div className="text-[11px] text-slate-600 flex items-center bg-white/80 p-2.5 rounded-xl border border-amber-200">
+              <span>
+                Sélectionnez le corps d'état pour calibrer automatiquement les seuils selon les <strong>DTU</strong> et <strong>recommandations CNAM</strong> officiels.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Période, Régime de Travail & Jours Fériés */}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 pt-2 border-t border-slate-100">
           <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1">Date de début du chantier *</label>
+            <label className="text-xs font-bold text-slate-700 block mb-1">Date de début *</label>
             <input
               type="date"
               required
               value={dateDebut}
               onChange={e => setDateDebut(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-sky-500 shadow-2xs"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:border-sky-500 shadow-2xs"
             />
           </div>
 
           <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1">Date de fin du chantier *</label>
+            <label className="text-xs font-bold text-slate-700 block mb-1">Date de fin *</label>
             <input
               type="date"
               required
               value={dateFin}
               onChange={e => setDateFin(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-sky-500 shadow-2xs"
+              className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:border-sky-500 shadow-2xs"
             />
           </div>
 
-          <div className="flex items-center pt-5">
-            <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-slate-800">
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">Régime de Travail</label>
+            <select
+              value={regimeTravail}
+              onChange={e => setRegimeTravail(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none focus:border-sky-500 shadow-2xs cursor-pointer"
+            >
+              <option value="ouvres">Jours Ouvrés (5j/7 : Lun - Ven)</option>
+              <option value="ouvrables">Jours Ouvrables (6j/7 : Lun - Sam)</option>
+              <option value="calendaires">Jours Calendaires (7j/7)</option>
+            </select>
+          </div>
+
+          <div className="flex items-center pt-4">
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
               <input
                 type="checkbox"
-                checked={excludeWeekends}
-                onChange={e => setExcludeWeekends(e.target.checked)}
+                checked={excludeHolidays}
+                onChange={e => setExcludeHolidays(e.target.checked)}
                 className="w-4 h-4 text-sky-600 rounded focus:ring-sky-500 cursor-pointer"
               />
-              <span>Exclure les Samedis & Dimanches (Jours ouvrés)</span>
+              <span>Exclure 11 Jours Fériés légaux (Art. L. 3133-1)</span>
             </label>
           </div>
         </div>
 
         {/* Paramétrage des Seuils d'Arrêt de Chantier */}
         <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-          <div className="flex items-center gap-2">
-            <Sliders className="w-4 h-4 text-sky-600" />
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-              Seuils Réglementaires & Contractuels d'Arrêt de Travaux
-            </h3>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-sky-600" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Seuils Normatifs d'Arrêt de Travaux ({currentPreset.norme})
+              </h3>
+            </div>
+            <span className="text-[10px] text-slate-500 font-medium">Ajustables selon CCTP</span>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-1">
             <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-              <span className="text-slate-500 font-bold block text-[10px] uppercase">Vent violent (Grue/Levage)</span>
+              <span className="text-slate-500 font-bold block text-[10px] uppercase">Vent violent (Rafale OMM 3s)</span>
               <div className="flex items-center gap-1 mt-1">
                 <input
                   type="number"
@@ -355,7 +569,7 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
             </div>
 
             <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-              <span className="text-slate-500 font-bold block text-[10px] uppercase">Pluie / Ruissellement</span>
+              <span className="text-slate-500 font-bold block text-[10px] uppercase">Pluie / Précipitations</span>
               <div className="flex items-center gap-1 mt-1">
                 <input
                   type="number"
@@ -368,7 +582,7 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
             </div>
 
             <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-              <span className="text-slate-500 font-bold block text-[10px] uppercase">Gel sous abri (Maçonnerie)</span>
+              <span className="text-slate-500 font-bold block text-[10px] uppercase">Gel sous abri (Minimale)</span>
               <div className="flex items-center gap-1 mt-1">
                 <input
                   type="number"
@@ -415,12 +629,12 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
           <div className="bg-white rounded-2xl border-2 border-amber-400 p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
               <div>
-                <span className="text-xs font-black uppercase tracking-wider text-slate-500 block">BILAN OFFICIEL CIBTP</span>
+                <span className="text-xs font-black uppercase tracking-wider text-slate-500 block">BILAN OFFICIEL DES INTEMPÉRIES</span>
                 <h2 className="text-xl font-black text-slate-950 mt-0.5">
-                  {summary.intemperieDaysCount} Jour(s) d'Arrêt Justifié(s) sur {summary.totalDaysWorked} Jours Ouvrés
+                  {summary.intemperieDaysCount} Jour(s) d'Arrêt Justifié(s) sur {summary.totalDaysWorked} Jours Travaillés
                 </h2>
                 <p className="text-xs text-slate-600 font-medium mt-1">
-                  Chantier : <strong>{nomChantier}</strong> ({adresse}) • Station de référence : <strong>{referenceStation?.name} ({referenceStation?.distance} km)</strong>
+                  Chantier : <strong>{nomChantier}</strong> • Lot : <strong>{currentPreset.nom} ({currentPreset.norme})</strong> • Station Météo-France : <strong>{referenceStation?.name} ({referenceStation?.distance} km)</strong>
                 </p>
               </div>
 
@@ -428,91 +642,100 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
                 <button
                   onClick={handleDownloadPdf}
                   disabled={isGeneratingPdf}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-slate-950 hover:bg-slate-800 text-xs font-black text-white shadow-md transition disabled:opacity-50 cursor-pointer transform hover:-translate-y-0.5"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs shadow-md shadow-sky-600/20 transition cursor-pointer"
                 >
-                  <FileCheck className="w-4 h-4 text-emerald-400" />
-                  {isGeneratingPdf ? 'Génération du PDF…' : "Télécharger l'Attestation Officielle BTP (PDF)"}
+                  <FileCheck className="w-4 h-4" />
+                  {isGeneratingPdf ? 'Génération du PDF…' : 'Télécharger l\'Attestation PDF'}
                 </button>
               </div>
             </div>
 
-            {/* 4 KPIs BTP */}
+            {/* Grille 4 KPIs d'arrêts */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
                 <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Vent Violent</span>
-                <span className="text-xl font-black text-rose-700 block mt-0.5">{summary.windStops} j</span>
-                <span className="text-[10px] text-slate-500">Seuil $\ge$ {limitWind} km/h</span>
+                <span className="text-lg font-black text-slate-900 block mt-0.5">{summary.windStops} jour(s)</span>
+                <span className="text-[10px] text-slate-500">Seuil ≥ {limitWind} km/h</span>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Pluies</span>
-                <span className="text-xl font-black text-sky-700 block mt-0.5">{summary.rainStops} j</span>
-                <span className="text-[10px] text-slate-500">Seuil $\ge$ {limitRain} mm</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Précipitations</span>
+                <span className="text-lg font-black text-sky-800 block mt-0.5">{summary.rainStops} jour(s)</span>
+                <span className="text-[10px] text-slate-500">Seuil ≥ {limitRain} mm</span>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Gel</span>
-                <span className="text-xl font-black text-indigo-700 block mt-0.5">{summary.freezeStops} j</span>
-                <span className="text-[10px] text-slate-500">Seuil $\le$ {limitTemp}°C</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Gel sous abri</span>
+                <span className="text-lg font-black text-blue-700 block mt-0.5">{summary.freezeStops} jour(s)</span>
+                <span className="text-[10px] text-slate-500">Seuil ≤ {limitTemp}°C</span>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Canicule</span>
-                <span className="text-xl font-black text-amber-700 block mt-0.5">{summary.heatStops} j</span>
-                <span className="text-[10px] text-slate-500">Seuil $\ge$ {limitHeat}°C</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase block">Arrêts Forte Chaleur</span>
+                <span className="text-lg font-black text-rose-600 block mt-0.5">{summary.heatStops} jour(s)</span>
+                <span className="text-[10px] text-slate-500">Seuil ≥ {limitHeat}°C</span>
               </div>
             </div>
           </div>
 
-          {/* Tableau Détaillé des Jours */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-3">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-950 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-sky-600" />
-              Chronologie Journalière des Conditions Météorologiques ({daysAnalysis.length} jours analysés)
-            </h3>
+          {/* Tableau Détaillé Jour par Jour */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider">
+                  Chrono-Relevés Quotidiens & Qualification d'Arrêt de Travail
+                </h3>
+                <span className="text-[10px] text-slate-400">
+                  {daysAnalysis.length} journées analysées • Norme de vent OMM 3s (FXI3S) certifiée
+                </span>
+              </div>
+              <span className="text-xs font-mono font-bold bg-slate-800 px-3 py-1 rounded-lg">
+                Taux d'intempérie : {summary.intemperieRate}%
+              </span>
+            </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse border border-slate-200 text-xs rounded-xl overflow-hidden shadow-2xs">
+              <table className="w-full border-collapse text-left text-xs">
                 <thead>
-                  <tr className="bg-slate-900 text-white font-black">
-                    <th className="border border-slate-300 p-2 text-center">Date</th>
-                    <th className="border border-slate-300 p-2 text-center">Jour</th>
-                    <th className="border border-slate-300 p-2 text-center">T° Min / Max</th>
-                    <th className="border border-slate-300 p-2 text-center">Pluie 24h</th>
-                    <th className="border border-slate-300 p-2 text-center">Rafale Max (FXI3S)</th>
-                    <th className="border border-slate-300 p-2 text-center">Statut Chantier</th>
-                    <th className="border border-slate-300 p-2 text-left">Motif de Stoppage / Dérogation</th>
+                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-black text-[11px]">
+                    <th className="p-3 text-center">Date</th>
+                    <th className="p-3 text-center">Jour</th>
+                    <th className="p-3 text-center">Tn / Tx</th>
+                    <th className="p-3 text-center">Pluie 24h</th>
+                    <th className="p-3 text-center">Rafale Max FXI3S</th>
+                    <th className="p-3 text-center">Qualification Chantier</th>
+                    <th className="p-3 text-left">Motif Technique / Réglementaire</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100">
                   {daysAnalysis.map((day, idx) => (
-                    <tr
-                      key={day.date}
-                      className={day.isStop ? 'bg-rose-50 font-bold' : (idx % 2 === 1 ? 'bg-slate-50/60' : '')}
+                    <tr 
+                      key={day.date || idx}
+                      className={day.isStop ? 'bg-rose-50/60 font-semibold' : (idx % 2 === 1 ? 'bg-slate-50/40' : '')}
                     >
-                      <td className="border border-slate-300 p-2 text-center font-mono font-bold text-slate-950">
+                      <td className="p-2.5 text-center font-mono font-bold text-slate-900">
                         {day.dateFormatted}
                       </td>
-                      <td className="border border-slate-300 p-2 text-center uppercase text-[11px] font-bold text-slate-600">
+                      <td className="p-2.5 text-center text-slate-600 font-bold uppercase text-[10px]">
                         {day.dayName}
                       </td>
-                      <td className="border border-slate-300 p-2 text-center font-mono">
+                      <td className="p-2.5 text-center font-mono">
                         {day.tn != null ? `${day.tn}°` : '-'} / {day.tx != null ? `${day.tx}°` : '-'}
                       </td>
-                      <td className={`border border-slate-300 p-2 text-center ${day.rain >= limitRain ? 'text-sky-800 font-black' : ''}`}>
+                      <td className={`p-2.5 text-center ${day.rain >= limitRain ? 'text-sky-800 font-black' : ''}`}>
                         {day.rain != null ? `${day.rain} mm` : '0 mm'}
                       </td>
-                      <td className={`border border-slate-300 p-2 text-center ${day.fxi >= limitWind ? 'text-rose-700 font-black' : ''}`}>
+                      <td className={`p-2.5 text-center ${day.fxi >= limitWind ? 'text-rose-700 font-black' : ''}`}>
                         {day.fxi != null ? `${day.fxi} km/h` : 'Non mesuré'}
                       </td>
-                      <td className="border border-slate-300 p-2 text-center">
+                      <td className="p-2.5 text-center">
                         <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase ${
                           day.isStop ? 'bg-rose-600 text-white shadow-2xs' : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
                         }`}>
                           {day.isStop ? 'ARRÊT JUSTIFIÉ' : 'PRATICABLE'}
                         </span>
                       </td>
-                      <td className="border border-slate-300 p-2 text-slate-900 text-xs">
+                      <td className="p-2.5 text-slate-900 text-xs">
                         {day.reason}
                       </td>
                     </tr>
@@ -532,13 +755,13 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
             </p>
             <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
               <span>Visa officiel Patrick MARLIÈRE • Directeur Météo-Climat Pro</span>
-              <strong className="text-slate-900">Document certifié conforme CIBTP</strong>
+              <strong className="text-slate-900">Document certifié conforme Code du Travail</strong>
             </div>
           </div>
         </div>
       )}
 
-      {/* Template PDF invisible pour capture */}
+      {/* Template PDF masqué pour la capture jsPDF / html2canvas */}
       <AttestationBtpPdfTemplate
         dossierBtp={{
           nomChantier,
@@ -546,7 +769,9 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
           adresse: adresse || addressQuery,
           dateDebut,
           dateFin,
-          excludeWeekends,
+          regimeTravail,
+          excludeHolidays,
+          selectedLot: currentPreset,
           reference: refAttestation
         }}
         daysAnalysis={daysAnalysis}

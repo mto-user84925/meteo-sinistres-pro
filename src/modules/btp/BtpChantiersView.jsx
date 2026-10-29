@@ -5,12 +5,7 @@ import {
 } from 'lucide-react';
 import { btpStorageService } from '../../services/btpStorageService';
 import { geocodingService } from '../../services/geocodingService';
-
-const ALL_LOTS = [
-  'Gros œuvre', 'Terrassement / VRD', 'Grues / Levage', 
-  'Charpente', 'Couverture / Étanchéité', 'Bardage', 
-  'Menuiseries extérieures', 'Peinture extérieure / Ravalement', 'Espaces verts'
-];
+import { BTP_LOTS_NAMES } from '../../constants/btpNorms';
 
 export default function BtpChantiersView({ onSelectChantierForAttestation }) {
   const [chantiers, setChantiers] = useState([]);
@@ -113,7 +108,7 @@ export default function BtpChantiersView({ onSelectChantierForAttestation }) {
             Suivi des Chantiers BTP & Vigilance
           </h1>
           <p className="text-xs text-slate-500 mt-1 font-medium">
-            Gestion opérationnelle des chantiers — Analyse météo par corps d'état et émission d'attestations CIBTP
+            Gestion opérationnelle des chantiers — Analyse météo par corps d'état et émission d'attestations d'intempéries BTP
           </p>
         </div>
 
@@ -287,7 +282,7 @@ export default function BtpChantiersView({ onSelectChantierForAttestation }) {
               <div>
                 <label className="font-bold text-slate-700 block mb-1.5">Lots & Corps d'état concernés :</label>
                 <div className="flex flex-wrap gap-1.5">
-                  {ALL_LOTS.map(lot => {
+                  {BTP_LOTS_NAMES.map(lot => {
                     const isSelected = selectedLots.includes(lot);
                     return (
                       <button

@@ -107,7 +107,7 @@ export default function Sidebar({ activeTab, setActiveTab }) {
 
       <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
         <p className="font-bold text-slate-900">Météo Climat PRO</p>
-        <p className="mt-0.5">Assurances • CIBTP • Code du Travail</p>
+        <p className="mt-0.5">Assurances • Chantiers BTP • Code du Travail</p>
         <p className="mt-1 font-mono text-[10px] text-sky-700 font-bold">Version 2.0 BTP & Sinistres</p>
       </div>
     </aside>

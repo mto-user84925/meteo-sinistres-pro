@@ -175,7 +175,7 @@ export const pdfGeneratorService = {
   },
 
   /**
-   * Génération de l'Attestation d'Intempéries BTP (1 Page A4 Officielle CIBTP)
+   * Génération de l'Attestation d'Intempéries BTP (A4 Officielle - Multi-pages si > 18 jours)
    */
   async generateAttestationBtp(dossierRef = 'Attestation_Intemperies_BTP') {
     const rootElement = document.getElementById('pdf-attestation-btp-container');
@@ -188,22 +188,27 @@ export const pdfGeneratorService = {
     await new Promise(res => setTimeout(res, 120));
 
     try {
-      const pageEl = document.getElementById('pdf-attestation-btp-page') || rootElement.children[0];
+      const pageEls = rootElement.querySelectorAll('.pdf-attestation-btp-page');
+      const elementsToPrint = pageEls.length > 0 ? Array.from(pageEls) : [rootElement.children[0]];
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
 
-      const canvas = await html2canvas(pageEl, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: 1000
-      });
+      for (let i = 0; i < elementsToPrint.length; i++) {
+        if (i > 0) pdf.addPage();
+        const canvas = await html2canvas(elementsToPrint[i], {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          windowWidth: 1000
+        });
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.96);
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        const imgData = canvas.toDataURL('image/jpeg', 0.96);
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      }
+
       pdf.save(`${dossierRef}.pdf`);
       return true;
     } finally {

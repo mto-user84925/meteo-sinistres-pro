@@ -150,7 +150,7 @@ export default function App() {
             />
           )}
 
-          {/* Module BTP : Attestations d'Intempéries CIBTP */}
+          {/* Module BTP : Attestations d'Intempéries */}
           {activeTab === 'btp-attestation' && (
             <BtpAttestationView
               preselectedChantier={selectedChantierForAttestation}

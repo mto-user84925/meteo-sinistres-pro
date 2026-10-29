@@ -29,7 +29,7 @@ export default function MainDashboard({
             Générateur d'Attestations Sinistres & Intempéries BTP
           </h1>
           <p className="text-xs text-slate-600 mt-2 leading-relaxed font-medium">
-            Rapports d'expertise assurance certifiés (norme OMM 3s FXI3S), calcul des arrêts de chantier selon les seuils CIBTP & Code du Travail, suivi météo des chantiers et climatologie de 1940 à aujourd'hui.
+            Rapports d'expertise assurance certifiés (norme OMM 3s FXI3S), calcul des arrêts de chantier selon les seuils réglementaires du Code du Travail, suivi météo des chantiers et climatologie de 1940 à aujourd'hui.
           </p>
 
           <div className="flex flex-wrap items-center gap-3 mt-6">
@@ -47,7 +47,7 @@ export default function MainDashboard({
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-xs font-black text-slate-950 shadow-md shadow-amber-500/20 transition transform hover:-translate-y-0.5 cursor-pointer"
               >
                 <HardHat className="w-4 h-4" />
-                Attestation Intempéries BTP (CIBTP)
+                Attestation Intempéries BTP
               </button>
             )}
 
@@ -106,7 +106,7 @@ export default function MainDashboard({
             </div>
             <div>
               <h3 className="text-sm font-black text-slate-950">Intempéries BTP & Arrêts de Chantier</h3>
-              <p className="text-[11px] text-slate-500">Conformité CIBTP & Code du Travail (Art. L. 5424-6)</p>
+              <p className="text-[11px] text-slate-500">Conformité Code du Travail (Art. L. 5424-8) & Normes DTU</p>
             </div>
           </div>
           <p className="text-xs text-slate-600 leading-relaxed font-medium">
