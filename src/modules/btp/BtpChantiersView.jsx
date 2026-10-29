@@ -29,6 +29,13 @@ export default function BtpChantiersView({ onSelectChantierForAttestation }) {
 
   useEffect(() => {
     setChantiers(btpStorageService.getAll());
+    const onChantiersUpdated = (e) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setChantiers(e.detail);
+      }
+    };
+    window.addEventListener('btp_chantiers_updated', onChantiersUpdated);
+    return () => window.removeEventListener('btp_chantiers_updated', onChantiersUpdated);
   }, []);
 
   // Recherche BAN

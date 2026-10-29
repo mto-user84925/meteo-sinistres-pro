@@ -11,6 +11,7 @@ import { pdfGeneratorService } from '../../services/pdfGeneratorService';
 import { btpStorageService } from '../../services/btpStorageService';
 import { BTP_CORPS_ETAT, getPresetByIdOrName, BTP_CATEGORIES } from '../../constants/btpNorms';
 import { isFrenchPublicHoliday } from '../../utils/frenchHolidays';
+import { btpAttestationStorageService } from '../../services/btpAttestationStorageService';
 import AttestationBtpPdfTemplate from './AttestationBtpPdfTemplate';
 
 const FRENCH_DAYS = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
@@ -70,9 +71,16 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
 
   const refAttestation = 'ATT-BTP-' + Date.now().toString().slice(-6);
 
-  // Charger la liste des chantiers
+  // Charger la liste des chantiers et écouter les mises à jour Supabase
   useEffect(() => {
     setSavedChantiers(btpStorageService.getAll());
+    const onChantiersUpdated = (e) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setSavedChantiers(e.detail);
+      }
+    };
+    window.addEventListener('btp_chantiers_updated', onChantiersUpdated);
+    return () => window.removeEventListener('btp_chantiers_updated', onChantiersUpdated);
   }, []);
 
   // Synchronisation dynamique si preselectedChantier change
@@ -325,7 +333,7 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
 
       const conclusion = `L'analyse des relevés instrumentaux certifiés de la station Météo-France de référence (${refSt.name}, ${refSt.distance} km) fait ressortir ${intemperieDaysCount} journée(s) d'intempéries caractérisées sur les ${totalDaysWorked} jours ouvrés de la période du ${dateDebut} au ${dateFin} pour le lot "${currentPreset.nom}". Les dépassements observés (${windStops > 0 ? `${windStops}j vent, ` : ''}${rainStops > 0 ? `${rainStops}j pluie, ` : ''}${freezeStops > 0 ? `${freezeStops}j gel, ` : ''}${heatStops > 0 ? `${heatStops}j chaleur, ` : ''}${snowStops > 0 ? `${snowStops}j neige, ` : ''}${stormStops > 0 ? `${stormStops}j orage` : ''}) constituent des causes légitimes et incontestables d'arrêt de travail au sens de la norme technique ${currentPreset.norme} et de l'article L. 5424-8 du Code du Travail, justifiant la prolongation des délais contractuels d'exécution.`;
 
-      setSummary({
+      const summaryObj = {
         totalDaysWorked,
         intemperieDaysCount,
         intemperieRate: totalDaysWorked > 0 ? Math.round((intemperieDaysCount / totalDaysWorked) * 100) : 0,
@@ -336,7 +344,33 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
         snowStops,
         stormStops,
         expertConclusion: conclusion
-      });
+      };
+
+      setSummary(summaryObj);
+
+      // Sauvegarde automatique dans Supabase (table attestations_intemperies)
+      btpAttestationStorageService.saveAttestation({
+        dossierBtp: {
+          nomChantier,
+          client,
+          adresse: adresse || addressQuery,
+          dateDebut,
+          dateFin,
+          regimeTravail,
+          excludeHolidays,
+          selectedLot: currentPreset,
+          reference: refAttestation
+        },
+        daysAnalysis: days,
+        summary: summaryObj,
+        referenceStation: refSt,
+        thresholds: {
+          wind: limitWind,
+          rain: limitRain,
+          temp: limitTemp,
+          heat: limitHeat
+        }
+      }).catch(e => console.warn('Erreur sauvegarde attestation Supabase:', e));
 
     } catch (err) {
       console.error(err);

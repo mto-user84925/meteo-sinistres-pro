@@ -33,6 +33,14 @@ export default function App() {
 
     const loaded = dossierStorageService.getAll();
     setDossiers(loaded);
+
+    const onDossiersUpdated = (e) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setDossiers(e.detail);
+      }
+    };
+    window.addEventListener('sinistres_dossiers_updated', onDossiersUpdated);
+    return () => window.removeEventListener('sinistres_dossiers_updated', onDossiersUpdated);
   }, []);
 
   const handleLoginSuccess = (user) => {
