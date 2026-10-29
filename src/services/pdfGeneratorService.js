@@ -172,5 +172,42 @@ export const pdfGeneratorService = {
     } finally {
       rootElement.style.display = prevDisplay;
     }
+  },
+
+  /**
+   * Génération de l'Attestation d'Intempéries BTP (1 Page A4 Officielle CIBTP)
+   */
+  async generateAttestationBtp(dossierRef = 'Attestation_Intemperies_BTP') {
+    const rootElement = document.getElementById('pdf-attestation-btp-container');
+    if (!rootElement) {
+      throw new Error("Conteneur #pdf-attestation-btp-container introuvable");
+    }
+
+    const prevDisplay = rootElement.style.display;
+    rootElement.style.display = 'block';
+    await new Promise(res => setTimeout(res, 120));
+
+    try {
+      const pageEl = document.getElementById('pdf-attestation-btp-page') || rootElement.children[0];
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+
+      const canvas = await html2canvas(pageEl, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 1000
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.96);
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`${dossierRef}.pdf`);
+      return true;
+    } finally {
+      rootElement.style.display = prevDisplay;
+    }
   }
 };

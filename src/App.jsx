@@ -7,6 +7,8 @@ import DossierList from './modules/dossier/DossierList';
 import NewDossierWizard from './modules/dossier/NewDossierWizard';
 import WeatherAnalysisView from './modules/analysis/WeatherAnalysisView';
 import MonthlyClimateTable from './modules/climatology/MonthlyClimateTable';
+import BtpAttestationView from './modules/btp/BtpAttestationView';
+import BtpChantiersView from './modules/btp/BtpChantiersView';
 import { dossierStorageService } from './services/dossierStorageService';
 
 export default function App() {
@@ -16,6 +18,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dossiers, setDossiers] = useState([]);
   const [activeDossier, setActiveDossier] = useState(null);
+  const [selectedChantierForAttestation, setSelectedChantierForAttestation] = useState(null);
 
   // Vérifier la session existante
   useEffect(() => {
@@ -88,6 +91,11 @@ export default function App() {
     setActiveDossier(updated);
   };
 
+  const handleSelectChantier = (chantier) => {
+    setSelectedChantierForAttestation(chantier);
+    setActiveTab('btp-attestation');
+  };
+
   if (!isAuthenticated) {
     return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
   }
@@ -135,6 +143,20 @@ export default function App() {
               dossier={activeDossier}
               onBack={() => setActiveTab('dossiers')}
               onUpdateDossier={handleUpdateDossier}
+            />
+          )}
+
+          {/* Module BTP : Attestations d'Intempéries CIBTP */}
+          {activeTab === 'btp-attestation' && (
+            <BtpAttestationView
+              preselectedChantier={selectedChantierForAttestation}
+            />
+          )}
+
+          {/* Module BTP : Chantiers & Vigilance */}
+          {activeTab === 'btp-chantiers' && (
+            <BtpChantiersView
+              onSelectChantierForAttestation={handleSelectChantier}
             />
           )}
 
