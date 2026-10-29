@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Shield, User, MapPin, Calendar, Clock, FileText, CheckCircle2, 
-  Search, ArrowRight, Building2, X
+  Search, ArrowRight, Building2, X, Star, PlusCircle
 } from 'lucide-react';
 import { geocodingService } from '../../services/geocodingService';
 import { stationSelectorService } from '../../services/stationSelectorService';
@@ -40,6 +40,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
 
   const [numSinistre, setNumSinistre] = useState('');
   const [sinistreType, setSinistreType] = useState(SINISTRE_TYPES[0]);
+  const [nomEvenement, setNomEvenement] = useState('');
   const [customSinistreType, setCustomSinistreType] = useState('');
   const [description, setDescription] = useState('');
   const [observations, setObservations] = useState('');
@@ -51,8 +52,12 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   const searchContainerRef = useRef(null);
 
-  // 5 Stations découvertes
+  // Stations découvertes et personnalisation
   const [discoveredStations, setDiscoveredStations] = useState([]);
+  const [selectedRefStationId, setSelectedRefStationId] = useState('');
+  const [selectedStationIds, setSelectedStationIds] = useState([]);
+  const [customStationSearch, setCustomStationSearch] = useState('');
+  const [customStationMatches, setCustomStationMatches] = useState([]);
 
   // Fermer la liste déroulante si on clique en dehors
   useEffect(() => {
@@ -92,8 +97,12 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
     setAddressQuery(loc.label);
     setAddressSuggestions([]);
 
-    const stations = stationSelectorService.findBestStations(loc.lat, loc.lon, 0, sinistreType);
+    const stations = stationSelectorService.findBestStations(loc.lat, loc.lon, 0, sinistreType, 35);
     setDiscoveredStations(stations);
+    if (stations.length > 0) {
+      setSelectedRefStationId(stations[0].id);
+      setSelectedStationIds(stations.slice(0, 4).map(s => s.id));
+    }
   };
 
   const handleClearAddress = () => {
@@ -101,6 +110,36 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
     setAddressQuery('');
     setAddressSuggestions([]);
     setDiscoveredStations([]);
+    setSelectedRefStationId('');
+    setSelectedStationIds([]);
+  };
+
+  // Recherche d'une station supplémentaire spécifique
+  const handleSearchCustomStation = (q) => {
+    setCustomStationSearch(q);
+    if (!q || q.trim().length < 2) {
+      setCustomStationMatches([]);
+      return;
+    }
+    const clean = q.toLowerCase().trim();
+    const all = stationSelectorService.getAllStations();
+    const matches = all.filter(st => 
+      st.name.toLowerCase().includes(clean) || st.id.includes(clean)
+    ).slice(0, 5);
+    setCustomStationMatches(matches);
+  };
+
+  const handleAddCustomStation = (st) => {
+    if (!discoveredStations.some(s => s.id === st.id)) {
+      const dist = selectedLocation 
+        ? Math.round(Math.sqrt(Math.pow((st.lat - selectedLocation.lat) * 111, 2) + Math.pow((st.lon - selectedLocation.lon) * 71, 2)) * 10) / 10
+        : 25;
+      const augmented = { ...st, distance: dist, isTop: false };
+      setDiscoveredStations(prev => [...prev, augmented]);
+      setSelectedStationIds(prev => [...prev, st.id]);
+    }
+    setCustomStationSearch('');
+    setCustomStationMatches([]);
   };
 
   const handleSubmit = (e) => {
@@ -116,9 +155,14 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
       return;
     }
 
-    const stations = discoveredStations.length > 0
-      ? discoveredStations
-      : stationSelectorService.findBestStations(selectedLocation.lat, selectedLocation.lon, 0, sinistreType);
+    let orderedStations = [];
+    if (discoveredStations.length > 0) {
+      const refSt = discoveredStations.find(s => s.id === selectedRefStationId) || discoveredStations[0];
+      const others = discoveredStations.filter(s => selectedStationIds.includes(s.id) && s.id !== refSt.id);
+      orderedStations = [refSt, ...others];
+    } else {
+      orderedStations = stationSelectorService.findBestStations(selectedLocation.lat, selectedLocation.lon, 0, sinistreType);
+    }
 
     const effectiveDateSinistre = dateMode === 'single' ? dateSinistre : `${dateDebut} au ${dateFin}`;
 
@@ -137,6 +181,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
       sinistre: {
         numSinistre: numSinistre.trim() || `SIN-${Date.now().toString().slice(-6)}`,
         sinistreType: sinistreType === 'Autre aléa climatique' && customSinistreType ? customSinistreType : sinistreType,
+        nomEvenement: nomEvenement.trim(),
         adresseSinistre: selectedLocation.label,
         commune: selectedLocation.city || selectedLocation.label,
         codePostal: selectedLocation.postcode || '',
@@ -150,7 +195,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
         description: description.trim(),
         observations: observations.trim()
       },
-      selectedStations: stations.slice(0, 5)
+      selectedStations: orderedStations.slice(0, 5)
     };
 
     onSaveAndAnalyze(dossier);
@@ -163,10 +208,10 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
         <div>
           <h2 className="text-2xl font-black text-slate-950 flex items-center gap-2.5">
             <Shield className="w-7 h-7 text-sky-600" />
-            Nouveau Dossier de Sinistre
+            Nouveau Dossier d'Expertise Sinistre
           </h2>
           <p className="text-xs text-slate-500 mt-1 font-medium">
-            Formulaire de déclaration — Analyse automatique sur les 5 stations Météo-France les plus proches
+            Formulaire de déclaration certifié — Choix de la station de référence et comparaison multi-postes (Norme OMM 3s)
           </p>
         </div>
         <button
@@ -195,7 +240,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 required
                 value={nom}
                 onChange={e => setNom(e.target.value)}
-                placeholder="Ex: Dupont"
+                placeholder="Ex: Merle"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
@@ -205,7 +250,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 type="text"
                 value={prenom}
                 onChange={e => setPrenom(e.target.value)}
-                placeholder="Ex: Jean"
+                placeholder="Ex: Madame"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
@@ -215,7 +260,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 type="text"
                 value={societe}
                 onChange={e => setSociete(e.target.value)}
-                placeholder="Ex: SAS BTP Nord"
+                placeholder="Ex: SCI Raimbeaucourt"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
@@ -226,7 +271,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 type="text"
                 value={compagnieAssurance}
                 onChange={e => setCompagnieAssurance(e.target.value)}
-                placeholder="Ex: AXA, Allianz, Groupama..."
+                placeholder="Ex: AXA, Allianz, Groupama, Macif..."
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
@@ -236,7 +281,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 type="text"
                 value={numContrat}
                 onChange={e => setNumContrat(e.target.value)}
-                placeholder="Ex: POL-19847291"
+                placeholder="Ex: POL-2026-8849"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 font-mono shadow-xs"
               />
             </div>
@@ -267,25 +312,25 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="Ex: jean.dupont@email.com"
+                placeholder="Ex: assure@domaine.fr"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
           </div>
         </div>
 
-        {/* Section 2 : Localisation du Sinistre */}
+        {/* Section 2 : Localisation du Sinistre & Sélection des Stations */}
         <div className="glass-card rounded-2xl p-6 border border-slate-200 space-y-4 shadow-sm bg-white relative z-40">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
             <MapPin className="w-5 h-5 text-sky-600" />
             <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-900">
-              2. Localisation Exacte du Sinistre
+              2. Localisation Exacte & Choix des Stations Météo-France
             </h3>
           </div>
 
           <div className="relative z-50" ref={searchContainerRef}>
             <label className="text-xs font-bold text-slate-700 block mb-1">
-              Adresse exacte, Commune ou Code Postal *
+              Adresse exacte du sinistre, Commune ou Code Postal *
             </label>
             <div className="relative">
               <input
@@ -298,7 +343,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                     setSelectedLocation(null);
                   }
                 }}
-                placeholder="Rechercher une commune ou adresse (ex: Strasbourg, Douai, Paris)..."
+                placeholder="Rechercher une adresse (ex: 176 rue du Maréchal Foch 59283 Raimbeaucourt)..."
                 className="w-full px-4 py-3 pl-10 pr-10 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 transition shadow-xs"
               />
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
@@ -317,7 +362,7 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
             {addressSuggestions.length > 0 && (
               <div className="absolute left-0 right-0 top-full mt-2 rounded-2xl border border-sky-300 shadow-2xl p-2 z-[9999] bg-white text-slate-900 max-h-80 overflow-y-auto space-y-1.5">
                 <div className="px-2 py-1 text-[10px] uppercase font-bold text-sky-700 tracking-wider">
-                  Sélectionnez votre adresse parmi les résultats :
+                  Sélectionnez votre adresse parmi les résultats officiels :
                 </div>
                 {addressSuggestions.map((loc, i) => (
                   <button
@@ -339,57 +384,146 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
             )}
           </div>
 
-          {/* Lieu validé */}
+          {/* Point validé */}
           {selectedLocation && (
             <div className="p-4 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-between">
               <div>
-                <p className="text-xs font-bold text-sky-800">Point géoréférencé :</p>
-                <p className="text-sm font-extrabold text-slate-900 mt-0.5">{selectedLocation.label}</p>
+                <p className="text-xs font-bold text-sky-800">Point géoréférencé du sinistre :</p>
+                <p className="text-sm font-extrabold text-slate-950 mt-0.5">{selectedLocation.label}</p>
                 <p className="text-xs font-mono text-slate-600 mt-0.5">
-                  GPS : {selectedLocation.lat.toFixed(4)}°N | {selectedLocation.lon.toFixed(4)}°E
+                  Coordonnées GPS : {selectedLocation.lat.toFixed(4)}°N | {selectedLocation.lon.toFixed(4)}°E
                 </p>
               </div>
-              <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+              <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
             </div>
           )}
 
-          {/* 5 Stations découvertes */}
+          {/* Grille de sélection des stations */}
           {discoveredStations.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 mb-3">
-                5 Stations Météo-France de référence retenues :
-              </h4>
+            <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                    Stations Météo-France disponibles ({discoveredStations.length} détectées) :
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Cliquez sur <strong>"Définir comme Référence"</strong> pour désigner la station pilote du rapport, et cochez les stations comparatives.
+                  </p>
+                </div>
+                <span className="text-[11px] font-bold text-sky-800 bg-sky-50 border border-sky-200 px-2.5 py-1 rounded-lg">
+                  {selectedStationIds.length} stations sélectionnées
+                </span>
+              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
-                {discoveredStations.slice(0, 5).map((st, idx) => (
-                  <div key={st.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-                    <div className="flex justify-between items-start">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {discoveredStations.slice(0, 9).map((st) => {
+                  const isRef = selectedRefStationId === st.id;
+                  const isChecked = selectedStationIds.includes(st.id) || isRef;
+
+                  return (
+                    <div 
+                      key={st.id} 
+                      className={`p-3.5 rounded-xl border-2 transition relative flex flex-col justify-between ${
+                        isRef 
+                          ? 'bg-sky-50 border-sky-600 shadow-md ring-2 ring-sky-200' 
+                          : isChecked 
+                            ? 'bg-white border-slate-300 hover:border-slate-400' 
+                            : 'bg-slate-50/60 border-slate-200 opacity-60'
+                      }`}
+                    >
                       <div>
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-mono">
-                          #{idx + 1}
-                        </span>
-                        <strong className="block text-xs text-slate-900 font-bold mt-1 truncate max-w-[100px]">{st.name}</strong>
+                        <div className="flex justify-between items-start gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              disabled={isRef}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedStationIds(prev => [...prev, st.id]);
+                                } else {
+                                  setSelectedStationIds(prev => prev.filter(id => id !== st.id));
+                                }
+                              }}
+                              className="rounded text-sky-600 focus:ring-sky-500 h-4 w-4 cursor-pointer"
+                              title="Inclure dans le tableau comparatif"
+                            />
+                            <strong className="text-xs font-black text-slate-950 truncate max-w-[130px]">{st.name}</strong>
+                          </div>
+                          <span className="text-xs font-extrabold text-sky-800 shrink-0">{st.distance} km</span>
+                        </div>
+
+                        <div className="mt-2 text-[10px] text-slate-600 font-mono flex items-center justify-between">
+                          <span>ID : {st.id}</span>
+                          <span>Alt : {st.alt} m</span>
+                        </div>
                       </div>
-                      <span className="text-xs font-black text-sky-700">{st.distance} km</span>
+
+                      <div className="mt-3 pt-2 border-t border-slate-200 flex items-center justify-between">
+                        {isRef ? (
+                          <span className="text-[10px] font-black text-sky-900 bg-sky-200/80 px-2 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider">
+                            <Star className="w-3 h-3 fill-sky-700 text-sky-700" /> Station de Référence
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRefStationId(st.id);
+                              if (!selectedStationIds.includes(st.id)) {
+                                setSelectedStationIds(prev => [...prev, st.id]);
+                              }
+                            }}
+                            className="text-[10px] font-bold text-slate-600 hover:text-sky-700 hover:bg-sky-50 px-2 py-1 rounded transition border border-slate-200"
+                          >
+                            Définir comme référence
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-500 space-y-0.5">
-                      <p>ID : <span className="font-mono text-slate-700 font-semibold">{st.id}</span></p>
-                      <p>Alt : {st.alt} m</p>
+                  );
+                })}
+              </div>
+
+              {/* Barre d'ajout manuel d'une autre station */}
+              <div className="pt-2">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={customStationSearch}
+                    onChange={e => handleSearchCustomStation(e.target.value)}
+                    placeholder="Ajouter une autre station spécifique (ex: Valenciennes, Cambrai, Arras, Dunkerque)..."
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-300 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-sky-500"
+                  />
+                  {customStationMatches.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-sky-300 rounded-xl shadow-xl z-50 p-1.5 space-y-1">
+                      {customStationMatches.map(st => (
+                        <button
+                          key={st.id}
+                          type="button"
+                          onClick={() => handleAddCustomStation(st)}
+                          className="w-full text-left px-3 py-2 rounded-lg hover:bg-sky-50 flex items-center justify-between text-xs"
+                        >
+                          <span className="font-bold text-slate-900">{st.name} <span className="font-mono text-slate-500 text-[10px]">({st.id})</span></span>
+                          <span className="text-[10px] text-sky-700 font-bold flex items-center gap-1">
+                            <PlusCircle className="w-3.5 h-3.5" /> Ajouter
+                          </span>
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Section 3 : Date unique OU Période */}
+        {/* Section 3 : Date unique OU Période & Aléa */}
         <div className="glass-card rounded-2xl p-6 border border-slate-200 space-y-4 shadow-sm bg-white relative z-10">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Calendar className="w-5 h-5 text-sky-600" />
               <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-900">
-                3. Temporalité du Sinistre
+                3. Aléa & Temporalité du Sinistre
               </h3>
             </div>
 
@@ -427,6 +561,19 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-700 block mb-1">
+                Nom de l'événement / Tempête (Optionnel)
+              </label>
+              <input
+                type="text"
+                value={nomEvenement}
+                onChange={e => setNomEvenement(e.target.value)}
+                placeholder="Ex: Tempête Austen, Tempête Ciaran..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
+              />
             </div>
 
             {dateMode === 'single' ? (
@@ -471,18 +618,18 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
                 type="text"
                 value={heureSinistre}
                 onChange={e => setHeureSinistre(e.target.value)}
-                placeholder={dateMode === "single" ? "Ex: 17h30 ou vers 18h" : "Ex: Pic intensite le 2eme jour"}
+                placeholder={dateMode === "single" ? "Ex: 14h00 ou vers 15h" : "Ex: Pic intensite le 2eme jour"}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
 
-            <div>
+            <div className="md:col-span-2">
               <label className="text-xs font-bold text-slate-700 block mb-1">Description sommaire des dommages</label>
               <input
                 type="text"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="Ex: Toiture endommagée, tuiles arrachées, infiltration..."
+                placeholder="Ex: Toiture endommagée, tuiles arrachées par les rafales de vent..."
                 className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-xs"
               />
             </div>
@@ -493,9 +640,9 @@ export default function NewDossierWizard({ onSaveAndAnalyze, onCancel }) {
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="submit"
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-sm font-bold text-white shadow-md shadow-sky-600/20 transition transform hover:-translate-y-0.5"
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-sm font-bold text-white shadow-md shadow-sky-600/20 transition transform hover:-translate-y-0.5 cursor-pointer"
           >
-            Lancer l'analyse {dateMode === 'period' ? 'de la période' : 'du sinistre'} (5 Stations Équipées)
+            Lancer l'analyse d'expertise ({selectedStationIds.length || 4} Stations Retenues)
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

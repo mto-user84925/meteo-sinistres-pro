@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import SinistreMap from '../map/SinistreMap';
 import CertificatIntemperies1Page from '../report/CertificatIntemperies1Page';
+import CertificatDossier3Pages from '../report/CertificatDossier3Pages';
+import { hourlyObsService } from '../../services/hourlyObsService';
 import { meteoFranceClimService } from '../../services/meteoFranceClimService';
 import { weatherAnalysisEngine } from '../../services/weatherAnalysisEngine';
 import { insuranceDecisionEngine } from '../../services/insuranceDecisionEngine';
@@ -23,6 +25,8 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
   const [insuranceDecision, setInsuranceDecision] = useState(null);
   const [customThreshold, setCustomThreshold] = useState(null);
   const [isGeneratingPdf1, setIsGeneratingPdf1] = useState(false);
+  const [isGeneratingPdf3, setIsGeneratingPdf3] = useState(false);
+  const [hourlyData, setHourlyData] = useState([]);
   const [selectedStationTab, setSelectedStationTab] = useState(0);
   const [liveVigilance, setLiveVigilance] = useState({
     level: 'Vert',
@@ -41,11 +45,10 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
     try {
       const claimType = sinistre.sinistreType || '';
       
-      // Sélection de TOUTES les stations dans un rayon de 30 km
-      let selected = stationSelectorService.findBestStations(sinistre.lat, sinistre.lon, 0, claimType, 30);
-      if (!selected || selected.length === 0) {
-        selected = dossier.selectedStations || [];
-      }
+      // Prioriser les stations choisies par l'utilisateur (avec la station de référence en tête)
+      let selected = (dossier?.selectedStations && dossier.selectedStations.length > 0)
+        ? dossier.selectedStations
+        : stationSelectorService.findBestStations(sinistre.lat, sinistre.lon, 0, claimType, 30);
 
       const results = [];
       const window3Days = insuranceDecisionEngine.get3DayWindow(sinistre.dateSinistre || sinistre.dateDebut);
@@ -84,25 +87,36 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
           let minTn = null;
           let maxTx = null;
 
-          history.forEach(day => {
-            if (day.rr !== null && day.rr !== undefined) totalRain += day.rr;
-            if (day.fxi !== null && day.fxi !== undefined) {
-              if (maxGust === null || day.fxi > maxGust) {
-                maxGust = day.fxi;
-                maxGustHour = day.hxi;
-                maxGustDate = day.date;
+          const targetDateStr = sinistre.dateSinistre || start;
+          const exactDay = history.find(d => d.date === targetDateStr);
+          if (!isPeriod && exactDay) {
+            totalRain = exactDay.rr !== null && exactDay.rr !== undefined ? exactDay.rr : 0;
+            maxGust = exactDay.fxi;
+            maxGustHour = exactDay.hxi;
+            maxGustDate = exactDay.date;
+            minTn = exactDay.tn;
+            maxTx = exactDay.tx;
+          } else {
+            history.forEach(day => {
+              if (day.rr !== null && day.rr !== undefined) totalRain += day.rr;
+              if (day.fxi !== null && day.fxi !== undefined) {
+                if (maxGust === null || day.fxi > maxGust) {
+                  maxGust = day.fxi;
+                  maxGustHour = day.hxi;
+                  maxGustDate = day.date;
+                }
               }
-            }
-            if (day.tn !== null && day.tn !== undefined) {
-              if (minTn === null || day.tn < minTn) minTn = day.tn;
-            }
-            if (day.tx !== null && day.tx !== undefined) {
-              if (maxTx === null || day.tx > maxTx) maxTx = day.tx;
-            }
-          });
+              if (day.tn !== null && day.tn !== undefined) {
+                if (minTn === null || day.tn < minTn) minTn = day.tn;
+              }
+              if (day.tx !== null && day.tx !== undefined) {
+                if (maxTx === null || day.tx > maxTx) maxTx = day.tx;
+              }
+            });
+          }
 
           const summaryObs = {
-            date: isPeriod ? `${start} au ${end}` : `${start} au ${end} (Scan 72h)`,
+            date: isPeriod ? `${start} au ${end}` : targetDateStr,
             rr: totalRain > 0 ? Math.round(totalRain * 10) / 10 : (history.length > 0 ? 0 : null),
             fxi: maxGust,
             hxi: maxGustHour,
@@ -166,6 +180,12 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
       }
 
       setStationsWithData(results);
+      if (results[0]) {
+        const dateForHourly = isPeriod ? sinistre.dateDebut : (sinistre.dateSinistre || start);
+        hourlyObsService.fetch24hData(results[0].id, dateForHourly, results[0].lat || sinistre.lat, results[0].lon || sinistre.lon)
+          .then(hData => setHourlyData(hData))
+          .catch(errH => console.warn('[WeatherAnalysisView] Hourly fetch warning:', errH));
+      }
 
       const analysis = weatherAnalysisEngine.generateAnalysis(sinistre, results);
       setAnalysisResult(analysis);
@@ -211,6 +231,17 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
       alert('Erreur lors de la génération du Certificat: ' + e.message);
     } finally {
       setIsGeneratingPdf1(false);
+    }
+  };
+
+  const handleDownloadDossier3Pages = async () => {
+    setIsGeneratingPdf3(true);
+    try {
+      await pdfGeneratorService.generateDossier3Pages(reference);
+    } catch (e) {
+      alert('Erreur lors de la génération du Dossier 3 Pages: ' + e.message);
+    } finally {
+      setIsGeneratingPdf3(false);
     }
   };
 
@@ -303,16 +334,26 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
           </div>
         </div>
 
-        {/* Bouton de Téléchargement 1 Page */}
-        <div>
+        {/* Boutons de Téléchargement 1 Page & Dossier 3 Pages */}
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             onClick={handleDownloadCertificat1Page}
             disabled={isGeneratingPdf1}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-slate-950 hover:bg-slate-800 text-xs font-black text-white shadow-md transition disabled:opacity-50 cursor-pointer transform hover:-translate-y-0.5"
-            title="Télécharger le certificat officiel au format PDF"
+            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-xs font-black text-white shadow-md transition disabled:opacity-50 cursor-pointer transform hover:-translate-y-0.5"
+            title="Télécharger le certificat d'intempéries synthétique (1 Page A4)"
           >
             <FileCheck className="w-4 h-4 text-emerald-400 stroke-[2.5]" />
-            {isGeneratingPdf1 ? 'Génération du PDF…' : "Télécharger le Certificat PDF"}
+            {isGeneratingPdf1 ? 'Génération 1P…' : "Certificat 1 Page PDF"}
+          </button>
+
+          <button
+            onClick={handleDownloadDossier3Pages}
+            disabled={isGeneratingPdf3}
+            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-sky-700 hover:bg-sky-600 text-xs font-black text-white shadow-md shadow-sky-700/20 transition disabled:opacity-50 cursor-pointer transform hover:-translate-y-0.5"
+            title="Télécharger le dossier complet officiel en 3 pages A4 (Certificat FXI3S, Tableau 24h, Graphismes HD)"
+          >
+            <FileCheck className="w-4 h-4 text-emerald-300 stroke-[2.5]" />
+            {isGeneratingPdf3 ? 'Génération Dossier 3P…' : "Dossier Complet 3 Pages PDF"}
           </button>
         </div>
       </div>
@@ -767,6 +808,15 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
         stationsData={stationsWithData}
         insuranceDecision={insuranceDecision}
         vigilanceStatus={liveVigilance}
+      />
+
+      {/* TEMPLATE FORMAT 2 : DOSSIER OFFICIEL COMPLET 3 PAGES A4 (FXI3S, TABLEAU 24H, GRAPHISMES HD) */}
+      <CertificatDossier3Pages
+        dossier={dossier}
+        stationsData={stationsWithData}
+        insuranceDecision={insuranceDecision}
+        vigilanceStatus={liveVigilance}
+        hourlyData={hourlyData}
       />
     </div>
   );

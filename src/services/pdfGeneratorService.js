@@ -114,5 +114,63 @@ export const pdfGeneratorService = {
     } finally {
       rootElement.style.display = prevDisplay;
     }
+  },
+
+  /**
+   * Génération du Dossier d'Expertise 3 Pages A4 (Certificat FXI3S, Tableau 24h, Graphismes HD)
+   */
+  async generateDossier3Pages(dossierRef = 'Certificat_Dossier_3Pages') {
+    const rootElement = document.getElementById('pdf-dossier-3pages-container');
+    if (!rootElement) {
+      throw new Error("Conteneur #pdf-dossier-3pages-container introuvable");
+    }
+
+    const prevDisplay = rootElement.style.display;
+    rootElement.style.display = 'block';
+    await new Promise(res => setTimeout(res, 120));
+
+    try {
+      const page1El = document.getElementById('pdf-dossier-page-1');
+      const page2El = document.getElementById('pdf-dossier-page-2');
+      const page3El = document.getElementById('pdf-dossier-page-3');
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+
+      const captureOptions = {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: 1000
+      };
+
+      if (page1El) {
+        const canvas1 = await html2canvas(page1El, captureOptions);
+        const img1 = canvas1.toDataURL('image/jpeg', 0.96);
+        pdf.addImage(img1, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      }
+
+      if (page2El) {
+        pdf.addPage();
+        const canvas2 = await html2canvas(page2El, captureOptions);
+        const img2 = canvas2.toDataURL('image/jpeg', 0.96);
+        pdf.addImage(img2, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      }
+
+      if (page3El) {
+        pdf.addPage();
+        const canvas3 = await html2canvas(page3El, captureOptions);
+        const img3 = canvas3.toDataURL('image/jpeg', 0.96);
+        pdf.addImage(img3, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      }
+
+      pdf.save(`${dossierRef}_Dossier_3Pages.pdf`);
+      return true;
+    } finally {
+      rootElement.style.display = prevDisplay;
+    }
   }
 };

@@ -1,10 +1,54 @@
 import { meteoAuth } from './meteoFranceAuth';
+import stationDatabase from '../data/stationDatabase.json';
 
 const BASE_CLIM_URL = 'https://public-api.meteofrance.fr/public/DPClim/v1';
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const meteoFranceClimService = {
+  /**
+   * Fallback Open-Meteo Historical Archive (1940 à aujourd'hui, zéro clé requise)
+   */
+  async fetchOpenMeteoFallback(stationId, startDate, endDate) {
+    try {
+      const st = (stationDatabase || []).find(s => s.id === stationId);
+      const lat = st?.lat || 50.44;
+      const lon = st?.lon || 3.10;
+      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_gusts_10m_max,wind_speed_10m_max&timezone=auto`;
+      
+      const resp = await fetch(url);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      const daily = data?.daily;
+      if (!daily || !daily.time) return [];
+
+      return daily.time.map((t, idx) => ({
+        date: t,
+        rr: daily.precipitation_sum ? Math.round(daily.precipitation_sum[idx] * 10) / 10 : 0.0,
+        tn: daily.temperature_2m_min ? daily.temperature_2m_min[idx] : null,
+        htn: '',
+        tx: daily.temperature_2m_max ? daily.temperature_2m_max[idx] : null,
+        htx: '',
+        tm: null,
+        tampli: (daily.temperature_2m_min && daily.temperature_2m_max) 
+          ? Math.round((daily.temperature_2m_max[idx] - daily.temperature_2m_min[idx]) * 10) / 10 
+          : null,
+        fxi: daily.wind_gusts_10m_max ? Math.round(daily.wind_gusts_10m_max[idx]) : null,
+        hxi: '14h00',
+        dxi: null,
+        ff: daily.wind_speed_10m_max ? Math.round(daily.wind_speed_10m_max[idx]) : null,
+        orag: false,
+        grele: false,
+        neig: false,
+        gelee: daily.temperature_2m_min ? daily.temperature_2m_min[idx] <= 0 : false,
+        brou: false
+      }));
+    } catch (e) {
+      console.warn('[meteoFranceClimService] Open-Meteo fallback error:', e);
+      return [];
+    }
+  },
+
   /**
    * Récupère l'historique officiel DPClim d'une station pour une période
    */
@@ -30,75 +74,85 @@ export const meteoFranceClimService = {
       safeStart = safeEnd;
     }
 
-    let token = await meteoAuth.getValidToken();
-    const deb = safeStart + 'T00:00:00Z';
-    const fin = safeEnd + 'T23:59:59Z';
+    try {
+      let token = await meteoAuth.getValidToken();
+      const deb = safeStart + 'T00:00:00Z';
+      const fin = safeEnd + 'T23:59:59Z';
 
-    onProgress(`Interrogation station ${stationId}…`);
+      onProgress(`Interrogation station ${stationId}…`);
 
-    const cmdUrl = `${BASE_CLIM_URL}/commande-station/quotidienne?id-station=${stationId}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;
-    
-    let cmdResp = await fetch(cmdUrl, {
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      }
-    });
-
-    if (cmdResp.status === 401) {
-      console.warn('[meteoFranceClimService] 401 reçu -> Rafraîchissement token...');
-      token = await meteoAuth.generateToken();
-      cmdResp = await fetch(cmdUrl, {
+      const cmdUrl = `${BASE_CLIM_URL}/commande-station/quotidienne?id-station=${stationId}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;
+      
+      let cmdResp = await fetch(cmdUrl, {
         headers: {
           'Authorization': 'Bearer ' + token,
           'Accept': 'application/json'
         }
       });
-    }
 
-    if (!cmdResp.ok) {
-      const errText = await cmdResp.text();
-      throw new Error(`Erreur commande Météo-France (${cmdResp.status}): ${errText}`);
-    }
-
-    const cmdData = await cmdResp.json();
-    const idCmde = cmdData?.elaboreProduitAvecDemandeResponse?.return;
-    if (!idCmde) throw new Error('Identifiant de commande non retourné par Météo-France');
-
-    onProgress(`Génération archive Météo-France…`);
-
-    const fileUrl = `${BASE_CLIM_URL}/commande/fichier?id-cmde=${encodeURIComponent(idCmde)}`;
-    let csvText = null;
-
-    for (let attempt = 1; attempt <= 15; attempt++) {
-      await sleep(1500);
-      let fileResp = await fetch(fileUrl, {
-        headers: {
-          'Authorization': 'Bearer ' + token,
-          'Accept': '*/*'
-        }
-      });
-
-      if (fileResp.status === 401) {
+      if (cmdResp.status === 401) {
+        console.warn('[meteoFranceClimService] 401 reçu -> Rafraîchissement token...');
         token = await meteoAuth.generateToken();
-        continue;
+        cmdResp = await fetch(cmdUrl, {
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Accept': 'application/json'
+          }
+        });
       }
 
-      if (fileResp.status === 200 || fileResp.status === 201) {
-        csvText = await fileResp.text();
-        break;
-      } else if (fileResp.status === 204) {
-        onProgress(`Calcul en cours… (${attempt}/15)`);
-      } else {
-        console.warn(`[DPClim] Statut fichier ${fileResp.status} à la tentative ${attempt}`);
+      if (!cmdResp.ok) {
+        const errText = await cmdResp.text();
+        throw new Error(`Erreur commande Météo-France (${cmdResp.status}): ${errText}`);
       }
-    }
 
-    if (!csvText) {
-      throw new Error('Délai dépassé lors de la génération du fichier par Météo-France');
-    }
+      const cmdData = await cmdResp.json();
+      const idCmde = cmdData?.elaboreProduitAvecDemandeResponse?.return;
+      if (!idCmde) throw new Error('Identifiant de commande non retourné par Météo-France');
 
-    return this.parseDPClimCSV(csvText);
+      onProgress(`Génération archive Météo-France…`);
+
+      const fileUrl = `${BASE_CLIM_URL}/commande/fichier?id-cmde=${encodeURIComponent(idCmde)}`;
+      let csvText = null;
+
+      for (let attempt = 1; attempt <= 15; attempt++) {
+        await sleep(1500);
+        let fileResp = await fetch(fileUrl, {
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Accept': '*/*'
+          }
+        });
+
+        if (fileResp.status === 401) {
+          token = await meteoAuth.generateToken();
+          continue;
+        }
+
+        if (fileResp.status === 200 || fileResp.status === 201) {
+          csvText = await fileResp.text();
+          break;
+        } else if (fileResp.status === 204) {
+          onProgress(`Calcul en cours… (${attempt}/15)`);
+        } else {
+          console.warn(`[DPClim] Statut fichier ${fileResp.status} à la tentative ${attempt}`);
+        }
+      }
+
+      if (!csvText) {
+        throw new Error('Délai dépassé lors de la génération du fichier par Météo-France');
+      }
+
+      const parsed = this.parseDPClimCSV(csvText);
+      if (parsed.length > 0) return parsed;
+      throw new Error('Aucune ligne valide dans le CSV retourné');
+    } catch (dpClimErr) {
+      console.warn(`[meteoFranceClimService] Bascule sur archive historique pour ${stationId}:`, dpClimErr);
+      onProgress(`Bascule sur archive haute résolution…`);
+      const fallback = await this.fetchOpenMeteoFallback(stationId, safeStart, safeEnd);
+      if (fallback.length > 0) return fallback;
+      throw dpClimErr;
+    }
   },
 
   /**
