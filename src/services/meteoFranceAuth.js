@@ -23,7 +23,8 @@ class MeteoFranceAuth {
   async generateToken() {
     try {
       // 1. Essayer le relais serveur /api/mf-token
-      const res = await fetch('/api/mf-token');
+      const tokenUrl = typeof window !== 'undefined' ? '/api/mf-token' : 'https://meteo-sinistres-pro.vercel.app/api/mf-token';
+      const res = await fetch(tokenUrl);
       if (res.ok) {
         const data = await res.json();
         if (data.access_token && data.access_token.length > 100) {

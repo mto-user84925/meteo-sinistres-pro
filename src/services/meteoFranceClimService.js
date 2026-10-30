@@ -1,4 +1,4 @@
-import { meteoAuth } from './meteoFranceAuth';
+import { meteoAuth } from './meteoFranceAuth.js';
 
 const BASE_CLIM_URL = 'https://public-api.meteofrance.fr/public/DPClim/v1';
 
@@ -63,7 +63,8 @@ export const meteoFranceClimService = {
       });
 
       if (cmdResp.status === 401) {
-        console.warn('[meteoFranceClimService] 401 reçu -> Rafraîchissement token...');
+        console.warn('[meteoFranceClimService] 401 reçu -> Temporisation spike arrest et rafraîchissement token...');
+        await sleep(1500);
         token = await meteoAuth.generateToken();
         cmdResp = await fetch(cmdUrl, {
           headers: buildHeaders(token)
@@ -94,22 +95,15 @@ export const meteoFranceClimService = {
           }
         });
 
-        if (fileResp.status === 401) {
-          token = await meteoAuth.generateToken();
-          continue;
-        }
-
         if (fileResp.status === 200 || fileResp.status === 201) {
           csvText = await fileResp.text();
           break;
-        } else if (fileResp.status === 204) {
+        } else if (fileResp.status === 204 || fileResp.status === 404 || fileResp.status === 401) {
+          // En cours de génération côté Météo-France (401 initial = cluster backend en préparation)
           onProgress(`Calcul en cours… (${attempt}/15)`);
-        } else if (fileResp.status === 404) {
-          if (attempt <= 6) {
-            onProgress(`Calcul en cours… (${attempt}/15)`);
-          } else {
-            break;
-          }
+          await sleep(2500);
+        } else if (fileResp.status === 410) {
+          break;
         }
       }
 
@@ -161,6 +155,8 @@ export const meteoFranceClimService = {
     });
 
     if (cmdResp.status === 401) {
+      console.warn('[meteoFranceClimService] 401 horaire reçu -> Temporisation spike arrest et renouvellement...');
+      await sleep(1500);
       token = await meteoAuth.generateToken();
       cmdResp = await fetch(cmdUrl, {
         headers: {
@@ -198,12 +194,11 @@ export const meteoFranceClimService = {
       if (fileResp.status === 200 || fileResp.status === 201) {
         csvText = await fileResp.text();
         break;
-      } else if (fileResp.status === 401) {
-        token = await meteoAuth.generateToken();
-        await sleep(1500);
-      } else if (fileResp.status === 204 || fileResp.status === 404) {
+      } else if (fileResp.status === 401 || fileResp.status === 204 || fileResp.status === 404) {
         onProgress(`Génération horaire en cours… (${attempt}/15)`);
         await sleep(2500);
+      } else if (fileResp.status === 410) {
+        break;
       }
     }
 

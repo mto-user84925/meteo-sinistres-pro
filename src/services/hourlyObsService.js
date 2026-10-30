@@ -1,4 +1,4 @@
-import { meteoFranceClimService } from './meteoFranceClimService';
+import { meteoFranceClimService } from './meteoFranceClimService.js';
 
 /**
  * Service de récupération des relevés horaires certifiés (24h)
