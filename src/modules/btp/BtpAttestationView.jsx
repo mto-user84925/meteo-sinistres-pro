@@ -203,20 +203,95 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
     }
 
     setLoading(true);
-    setProgressMsg("Recherche de la station Météo-France la plus proche…");
+    setProgressMsg("Interrogation du réseau officiel Météo-France DPClim…");
 
     try {
-      const bestStations = stationSelectorService.findBestStations(selectedLocation.lat, selectedLocation.lon, 0, 'vent', 35);
-      const refSt = bestStations[0] || { id: '59343001', name: 'Lille-Lesquin', distance: 15 };
-      setReferenceStation(refSt);
+      let history = [];
+      let refSt = null;
 
-      setProgressMsg(`Interrogation des relevés Météo-France pour ${refSt.name} (${dateDebut} au ${dateFin})…`);
-      const history = await meteoFranceClimService.fetchStationHistory(
-        refSt.id,
-        dateDebut,
-        dateFin,
-        (msg) => setProgressMsg(msg)
-      );
+      // 1. Tenter le relais d'observations multi-stations certifié DPClim
+      try {
+        const deptCode = (selectedLocation.postcode || '').slice(0, 2) || (selectedLocation.dept || '59');
+        const apiRes = await fetch(`/api/dpclim/observations?lat=${selectedLocation.lat}&lon=${selectedLocation.lon}&start=${dateDebut}&end=${dateFin}&dept=${deptCode}`);
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (apiData.success && Array.isArray(apiData.observations) && apiData.observations.length > 0) {
+            const stRain = apiData.station_pluie_temp || apiData.station || { nom: 'Station locale', dist_km: 2.5 };
+            const stWind = apiData.station_vent || stRain;
+            const isDual = apiData.is_dual_station || (stRain.nom !== stWind.nom);
+
+            refSt = {
+              id: stRain.code,
+              name: stRain.nom,
+              distance: stRain.dist_km,
+              isDual,
+              windStationName: stWind.nom,
+              windStationDistance: stWind.dist_km
+            };
+
+            history = apiData.observations.map(obs => ({
+              date: obs.date,
+              tn: obs.tmin,
+              tx: obs.tmax,
+              rr: obs.pluie,
+              fxi: obs.ventMax,
+              neig: obs.neige || false,
+              orag: obs.orage || false
+            }));
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[BtpAttestationView] Relais API indisponible, tentative directe navigateur:', apiErr);
+      }
+
+      // 2. Fallback direct navigateur si le relais serveur n'a pas répondu
+      if (history.length === 0) {
+        const bestStations = stationSelectorService.findBestStations(selectedLocation.lat, selectedLocation.lon, 0, '', 35);
+        refSt = bestStations[0] || { id: '59178001', name: 'Douai', distance: 2.4 };
+
+        setProgressMsg(`Interrogation des relevés Météo-France pour ${refSt.name} (${dateDebut} au ${dateFin})…`);
+        history = await meteoFranceClimService.fetchStationHistory(
+          refSt.id,
+          dateDebut,
+          dateFin,
+          (msg) => setProgressMsg(msg)
+        );
+
+        // Si la station la plus proche n'a pas d'anémomètre (ex: Douai), chercher la station anémomètre la plus proche
+        if (!history.some(h => h.fxi != null)) {
+          const extra = stationSelectorService.findNearestOutsideRadius(selectedLocation.lat, selectedLocation.lon, 0, [refSt.id], 1);
+          if (extra.length > 0) {
+            const windSt = extra[0];
+            try {
+              await new Promise(r => setTimeout(r, 1500));
+              setProgressMsg(`Recherche capteur vent : ${windSt.name} (${windSt.distance} km)…`);
+              const windHistory = await meteoFranceClimService.fetchStationHistory(windSt.id, dateDebut, dateFin, (msg) => setProgressMsg(msg));
+              if (windHistory && windHistory.length > 0) {
+                const windMap = new Map();
+                windHistory.forEach(w => {
+                  if (w.date && w.fxi != null) windMap.set(w.date, { fxi: w.fxi, hxi: w.hxi });
+                });
+                history.forEach(h => {
+                  if (windMap.has(h.date)) {
+                    h.fxi = windMap.get(h.date).fxi;
+                    h.hxi = windMap.get(h.date).hxi;
+                  }
+                });
+                refSt = {
+                  ...refSt,
+                  isDual: true,
+                  windStationName: windSt.name,
+                  windStationDistance: windSt.distance
+                };
+              }
+            } catch (errW) {
+              console.warn('[BtpAttestationView] Échec fallback vent:', errW);
+            }
+          }
+        }
+      }
+
+      setReferenceStation(refSt);
 
       // Traitement jour par jour
       const [sY, sM, sD] = dateDebut.split('-').map(Number);
@@ -668,7 +743,7 @@ export default function BtpAttestationView({ preselectedChantier = null }) {
                   {summary.intemperieDaysCount} Jour(s) d'Arrêt Justifié(s) sur {summary.totalDaysWorked} Jours Travaillés
                 </h2>
                 <p className="text-xs text-slate-600 font-medium mt-1">
-                  Chantier : <strong>{nomChantier}</strong> • Lot : <strong>{currentPreset.nom} ({currentPreset.norme})</strong> • Station Météo-France : <strong>{referenceStation?.name} ({referenceStation?.distance} km)</strong>
+                  Chantier : <strong>{nomChantier}</strong> • Lot : <strong>{currentPreset.nom} ({currentPreset.norme})</strong> • Station Météo-France : <strong>{referenceStation?.name} ({referenceStation?.distance} km)</strong>{referenceStation?.isDual && <span className="ml-1 text-sky-700 font-bold">• Vent anémomètre : {referenceStation?.windStationName} ({referenceStation?.windStationDistance} km)</span>}
                 </p>
               </div>
 

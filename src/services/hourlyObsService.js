@@ -16,6 +16,31 @@ export const hourlyObsService = {
         // Filtrer sur la date demandée (Europe/Paris)
         const dayRows = data.filter(r => (r.date_local === dateStr || r.date === dateStr));
         if (dayRows.length > 0) {
+          const hasWind = dayRows.some(r => (r.w_gst && r.w_gst > 0) || (r.gust && r.gust > 0));
+          // Si la station n'a pas de capteur de vent (ex: Douai), fusionner les rafales horaires de Lille
+          if (!hasWind && stationId !== '59343001') {
+            try {
+              await new Promise(res => setTimeout(res, 1500));
+              const windData = await meteoFranceClimService.fetchStationHourlyHistory('59343001', dateStr, dateStr);
+              if (windData && Array.isArray(windData)) {
+                const windMap = {};
+                windData.filter(r => (r.date_local === dateStr || r.date === dateStr)).forEach(w => {
+                  const h = w.h_local !== undefined ? w.h_local : w.h;
+                  windMap[h] = { w_avg: w.w_avg || w.wind || 0, w_gst: w.w_gst || w.gust || 0 };
+                });
+                dayRows.forEach(r => {
+                  const h = r.h_local !== undefined ? r.h_local : r.h;
+                  if (windMap[h]) {
+                    r.w_avg = windMap[h].w_avg;
+                    r.w_gst = windMap[h].w_gst;
+                  }
+                });
+              }
+            } catch (errWind) {
+              console.warn('[hourlyObsService] Dual station hourly wind fetch warn:', errWind);
+            }
+          }
+
           return dayRows.map(r => ({
             h: r.h_local !== undefined ? r.h_local : r.h,
             temp: r.temp,

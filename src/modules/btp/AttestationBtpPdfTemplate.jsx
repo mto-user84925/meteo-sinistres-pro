@@ -196,7 +196,7 @@ export default function AttestationBtpPdfTemplate({
               </div>
               <p><span className="text-slate-500">Période analysée :</span> <strong className="text-slate-950 font-bold">{dateDebut} au {dateFin}</strong></p>
               <p><span className="text-slate-500">Régime horaire :</span> <strong>{regimeLabel}</strong></p>
-              <p><span className="text-slate-500">Station officielle :</span> <strong className="text-[#003366]">{referenceStation.name || 'Lille-Lesquin'} ({referenceStation.distance || '12'} km)</strong></p>
+              <p><span className="text-slate-500">Station officielle :</span> <strong className="text-[#003366]">{referenceStation.isDual ? `${referenceStation.name} (${referenceStation.distance} km) • Vent anémomètre : ${referenceStation.windStationName} (${referenceStation.windStationDistance} km)` : `${referenceStation.name || 'Lille-Lesquin'} (${referenceStation.distance || '12'} km)`}</strong></p>
               <p><span className="text-slate-500">Seuils retenus :</span> <span className="font-semibold text-slate-800">Vent ≥ {thresholds.wind || 60} km/h • Pluie ≥ {thresholds.rain || 10} mm • Gel ≤ {thresholds.temp || 0}°C</span></p>
             </div>
           </div>
