@@ -1,87 +1,56 @@
 import { meteoAuth } from './meteoFranceAuth';
-import stationDatabase from '../data/stationDatabase.json';
 
 const BASE_CLIM_URL = 'https://public-api.meteofrance.fr/public/DPClim/v1';
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+const parseISODateUTC = (dateStr) => {
+  const [y, m, d] = (dateStr || '').split('-').map(Number);
+  return Date.UTC(y, (m || 1) - 1, d || 1);
+};
+
+const formatISODateUTC = (utcMs) => {
+  const d = new Date(utcMs);
+  return d.toLocaleDateString('sv-SE');
+};
+
+const DAY_MS = 86400000;
+
 export const meteoFranceClimService = {
   /**
-   * Fallback Open-Meteo Historical Archive (1940 à aujourd'hui, zéro clé requise)
+   * Normalisation du code station (5 chiffres Insee vers 8 chiffres DPClim).
    */
-  async fetchOpenMeteoFallback(stationId, startDate, endDate) {
-    try {
-      const st = (stationDatabase || []).find(s => s.id === stationId);
-      const lat = st?.lat || 50.44;
-      const lon = st?.lon || 3.10;
-      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_gusts_10m_max,wind_speed_10m_max&timezone=auto`;
-      
-      const resp = await fetch(url);
-      if (!resp.ok) return [];
-      const data = await resp.json();
-      const daily = data?.daily;
-      if (!daily || !daily.time) return [];
-
-      return daily.time.map((t, idx) => ({
-        date: t,
-        rr: daily.precipitation_sum ? Math.round(daily.precipitation_sum[idx] * 10) / 10 : 0.0,
-        tn: daily.temperature_2m_min ? daily.temperature_2m_min[idx] : null,
-        htn: '',
-        tx: daily.temperature_2m_max ? daily.temperature_2m_max[idx] : null,
-        htx: '',
-        tm: null,
-        tampli: (daily.temperature_2m_min && daily.temperature_2m_max) 
-          ? Math.round((daily.temperature_2m_max[idx] - daily.temperature_2m_min[idx]) * 10) / 10 
-          : null,
-        fxi: daily.wind_gusts_10m_max ? Math.round(daily.wind_gusts_10m_max[idx]) : null,
-        hxi: '14h00',
-        dxi: null,
-        ff: daily.wind_speed_10m_max ? Math.round(daily.wind_speed_10m_max[idx]) : null,
-        orag: false,
-        grele: false,
-        neig: false,
-        gelee: daily.temperature_2m_min ? daily.temperature_2m_min[idx] <= 0 : false,
-        brou: false
-      }));
-    } catch (e) {
-      console.warn('[meteoFranceClimService] Open-Meteo fallback error:', e);
-      return [];
-    }
+  normalizeStationId(stationId) {
+    const s = String(stationId || '').trim();
+    if (s.length === 5) return `${s}001`;
+    return s;
   },
 
   /**
-   * Récupère l'historique officiel DPClim d'une station pour une période
+   * Récupère l'historique officiel DPClim Quotidien d'une station pour une période.
+   * Strict FXI3S (rafale 3 secondes OMM).
    */
   async fetchStationHistory(stationId, startDate, endDate, onProgress = () => {}) {
     if (!stationId || !startDate || !endDate) return [];
 
-    const todayISO = new Date().toISOString().split('T')[0];
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayISO = yesterday.toISOString().split('T')[0];
+    const normId = this.normalizeStationId(stationId);
+    const yesterday = new Date(Date.now() - DAY_MS).toLocaleDateString('sv-SE');
 
-    // Météo-France DPClim consolide ses données jusqu'à J-1
     let safeStart = startDate;
     let safeEnd = endDate;
 
-    if (safeStart >= todayISO) {
-      safeStart = yesterdayISO;
-    }
-    if (safeEnd >= todayISO) {
-      safeEnd = yesterdayISO;
-    }
-    if (safeStart > safeEnd) {
-      safeStart = safeEnd;
-    }
+    if (safeStart > yesterday) safeStart = yesterday;
+    if (safeEnd > yesterday) safeEnd = yesterday;
+    if (safeStart > safeEnd) safeStart = safeEnd;
 
     try {
       let token = await meteoAuth.getValidToken();
       const deb = safeStart + 'T00:00:00Z';
       const fin = safeEnd + 'T23:59:59Z';
 
-      onProgress(`Interrogation station ${stationId}…`);
+      onProgress(`Commande station ${normId}…`);
 
-      const cmdUrl = `${BASE_CLIM_URL}/commande-station/quotidienne?id-station=${stationId}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;
+      const cmdUrl = `${BASE_CLIM_URL}/commande-station/quotidienne?id-station=${encodeURIComponent(normId)}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;
       
       const buildHeaders = (t) => ({
         'Authorization': 'Bearer ' + t,
@@ -116,7 +85,7 @@ export const meteoFranceClimService = {
       let csvText = null;
 
       for (let attempt = 1; attempt <= 15; attempt++) {
-        await sleep(1500);
+        await sleep(2000);
         let fileResp = await fetch(fileUrl, {
           headers: {
             'Authorization': 'Bearer ' + token,
@@ -135,8 +104,12 @@ export const meteoFranceClimService = {
           break;
         } else if (fileResp.status === 204) {
           onProgress(`Calcul en cours… (${attempt}/15)`);
-        } else {
-          console.warn(`[DPClim] Statut fichier ${fileResp.status} à la tentative ${attempt}`);
+        } else if (fileResp.status === 404) {
+          if (attempt <= 6) {
+            onProgress(`Calcul en cours… (${attempt}/15)`);
+          } else {
+            break;
+          }
         }
       }
 
@@ -145,19 +118,101 @@ export const meteoFranceClimService = {
       }
 
       const parsed = this.parseDPClimCSV(csvText);
-      if (parsed.length > 0) return parsed;
-      throw new Error('Aucune ligne valide dans le CSV retourné');
+      return parsed;
     } catch (dpClimErr) {
-      console.warn(`[meteoFranceClimService] Bascule sur archive historique pour ${stationId}:`, dpClimErr);
-      onProgress(`Bascule sur archive haute résolution…`);
-      const fallback = await this.fetchOpenMeteoFallback(stationId, safeStart, safeEnd);
-      if (fallback.length > 0) return fallback;
+      console.error(`[meteoFranceClimService] Erreur DPClim pour ${normId}:`, dpClimErr);
       throw dpClimErr;
     }
   },
 
   /**
-   * Parser le CSV DPClim avec priorité FXI3S (Norme OMM 3 secondes)
+   * Récupère l'historique officiel DPClim Horaire d'une station (0h à 23h Heure Légale française).
+   * Strict FXI3S (rafale 3 secondes OMM).
+   */
+  async fetchStationHourlyHistory(stationId, startDate, endDate, onProgress = () => {}) {
+    if (!stationId || !startDate || !endDate) return [];
+
+    const normId = this.normalizeStationId(stationId);
+    const yesterday = new Date(Date.now() - DAY_MS).toLocaleDateString('sv-SE');
+
+    let safeStart = startDate;
+    let safeEnd = endDate;
+
+    if (safeStart > yesterday) safeStart = yesterday;
+    if (safeEnd > yesterday) safeEnd = yesterday;
+    if (safeStart > safeEnd) safeStart = safeEnd;
+
+    const prevDayMs = parseISODateUTC(safeStart) - DAY_MS;
+    const prevDayStr = formatISODateUTC(prevDayMs);
+    const deb = `${prevDayStr}T20:00:00Z`;
+    const fin = `${safeEnd}T23:59:59Z`;
+
+    onProgress(`Commande horaire DPClim (${safeStart} → ${safeEnd})…`);
+
+    const cmdUrl = `${BASE_CLIM_URL}/commande-station/horaire?id-station=${encodeURIComponent(normId)}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;
+
+    let token = await meteoAuth.getValidToken();
+    let cmdResp = await fetch(cmdUrl, {
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'apikey': token,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (cmdResp.status === 401) {
+      token = await meteoAuth.generateToken();
+      cmdResp = await fetch(cmdUrl, {
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'apikey': token,
+          'Accept': 'application/json'
+        }
+      });
+    }
+
+    if (!cmdResp.ok) {
+      const errText = await cmdResp.text();
+      throw new Error(`Erreur commande horaire DPClim (${cmdResp.status}): ${errText}`);
+    }
+
+    const cmdData = await cmdResp.json();
+    const idCmde = cmdData?.elaboreProduitAvecDemandeResponse?.return;
+    if (!idCmde) throw new Error('Aucun numéro de commande horaire retourné par Météo-France');
+
+    onProgress(`Génération horaire en cours…`);
+    await sleep(2500);
+
+    const fileUrl = `${BASE_CLIM_URL}/commande/fichier?id-cmde=${encodeURIComponent(idCmde)}`;
+    let csvText = null;
+
+    for (let attempt = 1; attempt <= 15; attempt++) {
+      const fileResp = await fetch(fileUrl, {
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'apikey': token,
+          'Accept': '*/*'
+        }
+      });
+
+      if (fileResp.status === 200 || fileResp.status === 201) {
+        csvText = await fileResp.text();
+        break;
+      } else if (fileResp.status === 401) {
+        token = await meteoAuth.generateToken();
+        await sleep(1500);
+      } else if (fileResp.status === 204 || fileResp.status === 404) {
+        onProgress(`Génération horaire en cours… (${attempt}/15)`);
+        await sleep(2500);
+      }
+    }
+
+    if (!csvText) return [];
+    return this.parseDPClimHourlyCSV(csvText);
+  },
+
+  /**
+   * Parser le CSV DPClim Quotidien avec STRICT FXI3S (Norme OMM 3 secondes, exclusion de FXI).
    */
   parseDPClimCSV(csvText) {
     if (!csvText) return [];
@@ -165,9 +220,7 @@ export const meteoFranceClimService = {
     const lines = csvText.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
 
-    const headerLine = lines[0];
-    const headers = headerLine.split(';').map(h => h.trim().toUpperCase());
-
+    const headers = lines[0].split(';').map(h => h.trim().toUpperCase());
     const rows = [];
 
     const idxDate = headers.indexOf('DATE');
@@ -178,17 +231,10 @@ export const meteoFranceClimService = {
     const idxHTX = headers.indexOf('HTX');
     const idxTM = headers.indexOf('TM');
     const idxTAMPLI = headers.indexOf('TAMPLI');
-
-    // Rafales : priorité FXI3S (OMM 3s), sinon FXI
     const idxFXI3S = headers.indexOf('FXI3S');
     const idxHXI3S = headers.indexOf('HXI3S');
     const idxDXI3S = headers.indexOf('DXI3S');
-    const idxFXI = headers.indexOf('FXI');
-    const idxHXI = headers.indexOf('HXI');
-    const idxDXI = headers.indexOf('DXI');
     const idxFF = headers.indexOf('FF');
-
-    // Phénomènes
     const idxOrag = headers.indexOf('ORAG');
     const idxGrele = headers.indexOf('GRELE');
     const idxNeig = headers.indexOf('NEIG');
@@ -205,11 +251,8 @@ export const meteoFranceClimService = {
     const formatHour = (val) => {
       if (!val || val === '' || val === 'null') return '';
       const s = String(val).trim();
-      if (s.length === 4) {
-        return `${s.substring(0, 2)}h${s.substring(2, 4)}`;
-      } else if (s.length === 3) {
-        return `0${s.substring(0, 1)}h${s.substring(1, 3)}`;
-      }
+      if (s.length === 4) return `${s.substring(0, 2)}h${s.substring(2, 4)}`;
+      if (s.length === 3) return `0${s.substring(0, 1)}h${s.substring(1, 3)}`;
       return s;
     };
 
@@ -223,7 +266,7 @@ export const meteoFranceClimService = {
 
       const formattedDate = `${rawDate.substring(0, 4)}-${rawDate.substring(4, 6)}-${rawDate.substring(6, 8)}`;
 
-      // Rafale normalisée OMM (Conversion m/s -> km/h arrondi)
+      // STRICT FXI3S (Rafale 3 secondes OMM uniquement, pas de fallback FXI)
       let gustKmh = null;
       let gustHour = '';
       let gustDir = null;
@@ -237,18 +280,9 @@ export const meteoFranceClimService = {
         }
       }
 
-      if (gustKmh === null && idxFXI !== -1 && cols[idxFXI]) {
-        const ms = parseFloatFR(cols[idxFXI]);
-        if (ms !== null) {
-          gustKmh = Math.round(ms * 3.6);
-          gustHour = formatHour(cols[idxHXI]);
-          gustDir = parseFloatFR(cols[idxDXI]);
-        }
-      }
-
       const row = {
         date: formattedDate,
-        rr: idxRR !== -1 ? parseFloatFR(cols[idxRR]) : null,
+        rr: idxRR !== -1 ? (parseFloatFR(cols[idxRR]) ?? 0.0) : 0.0,
         tn: idxTN !== -1 ? parseFloatFR(cols[idxTN]) : null,
         htn: idxHTN !== -1 ? formatHour(cols[idxHTN]) : '',
         tx: idxTX !== -1 ? parseFloatFR(cols[idxTX]) : null,
@@ -256,6 +290,7 @@ export const meteoFranceClimService = {
         tm: idxTM !== -1 ? parseFloatFR(cols[idxTM]) : null,
         tampli: idxTAMPLI !== -1 ? parseFloatFR(cols[idxTAMPLI]) : null,
         fxi: gustKmh,
+        gust: gustKmh,
         hxi: gustHour,
         dxi: gustDir,
         ff: idxFF !== -1 ? (parseFloatFR(cols[idxFF]) !== null ? Math.round(parseFloatFR(cols[idxFF]) * 3.6) : null) : null,
@@ -271,5 +306,107 @@ export const meteoFranceClimService = {
 
     rows.sort((a, b) => a.date.localeCompare(b.date));
     return rows;
+  },
+
+  /**
+   * Parser le CSV horaire DPClim avec conversion Heure Légale française (0h à 23h).
+   */
+  parseDPClimHourlyCSV(csvText) {
+    if (!csvText) return [];
+
+    const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(';').map(h => h.trim());
+    const idxPoste = headers.indexOf('POSTE') !== -1 ? headers.indexOf('POSTE') : headers.indexOf('NUM_POSTE');
+    const idxDate = headers.indexOf('DATE');
+    const idxT = headers.indexOf('T');
+    const idxTN = headers.indexOf('TN');
+    const idxTX = headers.indexOf('TX');
+    const idxRR1 = headers.indexOf('RR1');
+    const idxFF = headers.indexOf('FF');
+    const idxFXI3S = headers.indexOf('FXI3S');
+    const idxU = headers.indexOf('U');
+    const idxPMER = headers.indexOf('PMER') !== -1 ? headers.indexOf('PMER') : headers.indexOf('PSTAT');
+
+    const parseVal = (cols, idx) => {
+      if (idx === -1) return null;
+      const v = cols[idx];
+      if (!v || v === '' || v === 'null') return null;
+      const num = parseFloat(v.replace(',', '.'));
+      return isNaN(num) ? null : num;
+    };
+
+    const results = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(';').map(c => c.trim());
+      if (cols.length < headers.length) continue;
+
+      const rawDate = idxDate !== -1 ? cols[idxDate] : '';
+      if (!rawDate || rawDate.length < 10) continue;
+
+      const year = parseInt(rawDate.substring(0, 4), 10);
+      const month = parseInt(rawDate.substring(4, 6), 10);
+      const day = parseInt(rawDate.substring(6, 8), 10);
+      const hour = parseInt(rawDate.substring(8, 10), 10);
+
+      // Météo-France DPClim est en UTC -> Conversion Europe/Paris
+      const utcMs = Date.UTC(year, month - 1, day, hour, 0, 0);
+      const dtUtc = new Date(utcMs);
+
+      const frParts = new Intl.DateTimeFormat('fr-FR', {
+        timeZone: 'Europe/Paris',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(dtUtc);
+      const pVal = (t) => frParts.find(p => p.type === t)?.value || '';
+      const localYear = pVal('year');
+      const localMonth = pVal('month');
+      const localDay = pVal('day');
+      const localHour = parseInt(pVal('hour'), 10);
+      const localDate = `${localYear}-${localMonth}-${localDay}`;
+      const localDt = new Date(parseInt(localYear, 10), parseInt(localMonth, 10) - 1, parseInt(localDay, 10), localHour, 0, 0);
+
+      const temp = parseVal(cols, idxT);
+      const tn = parseVal(cols, idxTN);
+      const tx = parseVal(cols, idxTX);
+      const rr1 = parseVal(cols, idxRR1) ?? 0;
+      const ffMS = parseVal(cols, idxFF);
+      const ffKmh = ffMS !== null ? Math.round(ffMS * 3.6) : null;
+      
+      // STRICT FXI3S (3 secondes OMM)
+      const fxi3sMS = parseVal(cols, idxFXI3S);
+      const fxiKmh = fxi3sMS !== null ? Math.round(fxi3sMS * 3.6) : null;
+
+      const u = parseVal(cols, idxU);
+      const pmer = parseVal(cols, idxPMER);
+
+      results.push({
+        time: localDt,
+        time_utc: dtUtc,
+        stationId: idxPoste !== -1 ? cols[idxPoste] : '',
+        date: localDate,
+        date_local: localDate,
+        date_utc: `${rawDate.substring(0, 4)}-${rawDate.substring(4, 6)}-${rawDate.substring(6, 8)}`,
+        h: localHour,
+        h_local: localHour,
+        h_utc: hour,
+        temp: temp !== null ? temp : (tx !== null && tn !== null ? parseFloat(((tx + tn) / 2).toFixed(1)) : null),
+        tn: tn,
+        tx: tx,
+        rain: rr1,
+        wind: ffKmh,
+        w_avg: ffKmh || 0,
+        gust: fxiKmh,
+        w_gst: fxiKmh || 0,
+        hum: u,
+        humi: u || 0,
+        pres: pmer,
+        press: pmer || 1013
+      });
+    }
+
+    return results.sort((a, b) => a.time - b.time);
   }
 };
