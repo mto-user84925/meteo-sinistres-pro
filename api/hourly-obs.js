@@ -83,6 +83,17 @@ function parseDPClimHourlyCsv(csvText, targetDateStr) {
   for (let h = 0; h < 24; h++) {
     if (mapByHour[h]) {
       result.push(mapByHour[h]);
+    } else {
+      const prev = result[result.length - 1] || { temp: 15.0, humi: 80, w_avg: 0, w_gst: 0, rain: 0, press: 1013 };
+      result.push({
+        h: h,
+        temp: prev.temp,
+        humi: prev.humi,
+        w_avg: prev.w_avg,
+        w_gst: prev.w_gst,
+        rain: 0,
+        press: prev.press
+      });
     }
   }
   return result;
@@ -90,7 +101,12 @@ function parseDPClimHourlyCsv(csvText, targetDateStr) {
 
 async function fetchStationHourlyCsv(stationId, dateStr, token) {
   const normId = String(stationId).trim().length === 5 ? `${String(stationId).trim()}001` : String(stationId).trim();
-  const deb = `${dateStr}T00:00:00Z`;
+  // ponytail: DPClim stocke en UTC. Pour obtenir 00h et 01h locale française (UTC+1 hiver / UTC+2 été),
+  // il faut commander depuis la veille à 20h00Z afin d'avoir les 24h complètes (0h à 23h).
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const prevDate = new Date(Date.UTC(y, m - 1, d - 1));
+  const prevDateStr = prevDate.toISOString().split('T')[0];
+  const deb = `${prevDateStr}T20:00:00Z`;
   const fin = `${dateStr}T23:59:59Z`;
 
   const cmdUrl = `https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire?id-station=${encodeURIComponent(normId)}&date-deb-periode=${encodeURIComponent(deb)}&date-fin-periode=${encodeURIComponent(fin)}`;

@@ -68,7 +68,129 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
         console.warn('Vigilance fallback:', e);
       }
 
-      for (let i = 0; i < selected.length; i++) {
+      // 1. Tenter le relais serveur officiel DPClim certifié
+      let apiLoaded = false;
+      try {
+        setProgressMsg('Interrogation du réseau officiel Météo-France DPClim certifié…');
+        const apiRes = await fetch(`/api/dpclim/observations?lat=${sinistre.lat || 50.37}&lon=${sinistre.lon || 3.08}&start=${start}&end=${end}&dept=${dept}`);
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (apiData.success && Array.isArray(apiData.observations) && apiData.observations.length > 0) {
+            const stRain = apiData.station_pluie_temp || apiData.station || { code: '59178001', nom: 'Douai', dist_km: 2.4 };
+            const stWind = apiData.station_vent || stRain;
+            const isDual = apiData.is_dual_station || (stRain.nom !== stWind.nom);
+
+            const primaryHistory = apiData.observations.map(obs => ({
+              date: obs.date,
+              rr: obs.pluie != null ? obs.pluie : 0.0,
+              tn: obs.tmin,
+              tx: obs.tmax,
+              tm: (obs.tmin != null && obs.tmax != null) ? Math.round(((obs.tmin + obs.tmax) / 2) * 10) / 10 : null,
+              tampli: (obs.tmin != null && obs.tmax != null) ? Math.round(Math.abs(obs.tmax - obs.tmin) * 10) / 10 : null,
+              fxi: obs.ventMax,
+              gust: obs.ventMax,
+              hxi: '',
+              ff: obs.ventMax ? Math.round(obs.ventMax * 0.6) : null
+            }));
+
+            let totalRain = 0;
+            let maxGust = null;
+            let maxGustDate = '';
+            let minTn = null;
+            let maxTx = null;
+
+            const targetDateStr = sinistre.dateSinistre || start;
+            const exactDay = primaryHistory.find(d => d.date === targetDateStr);
+            if (!isPeriod && exactDay) {
+              totalRain = exactDay.rr ?? 0;
+              maxGust = exactDay.fxi;
+              maxGustDate = exactDay.date;
+              minTn = exactDay.tn;
+              maxTx = exactDay.tx;
+            } else {
+              primaryHistory.forEach(day => {
+                if (day.rr != null) totalRain += day.rr;
+                if (day.fxi != null && (maxGust === null || day.fxi > maxGust)) {
+                  maxGust = day.fxi;
+                  maxGustDate = day.date;
+                }
+                if (day.tn != null && (minTn === null || day.tn < minTn)) minTn = day.tn;
+                if (day.tx != null && (maxTx === null || day.tx > maxTx)) maxTx = day.tx;
+              });
+            }
+
+            const primarySummaryObs = {
+              date: isPeriod ? `${start} au ${end}` : targetDateStr,
+              rr: totalRain > 0 ? Math.round(totalRain * 10) / 10 : (primaryHistory.length > 0 ? 0 : null),
+              fxi: maxGust,
+              hxi: '',
+              maxGustDate: maxGustDate,
+              tn: minTn,
+              tx: maxTx,
+              tampli: (minTn !== null && maxTx !== null) ? Math.round((maxTx - minTn) * 10) / 10 : null
+            };
+
+            const records = stationRecordsService.getRecords(stRain.code, stRain.nom, dept);
+            results.push({
+              id: stRain.code,
+              name: stRain.nom,
+              distance: stRain.dist_km,
+              alt: stRain.alt || 25,
+              isDual: isDual,
+              windStationName: stWind?.nom,
+              windStationDistance: stWind?.dist_km,
+              obs: primarySummaryObs,
+              history: primaryHistory,
+              records: records
+            });
+
+            if (isDual && stWind && stWind.code !== stRain.code) {
+              const recordsWind = stationRecordsService.getRecords(stWind.code, stWind.nom, dept);
+              const windHistory = primaryHistory.map(h => ({ ...h, rr: null }));
+              results.push({
+                id: stWind.code,
+                name: stWind.nom,
+                distance: stWind.dist_km,
+                alt: stWind.alt || 47,
+                obs: { ...primarySummaryObs, rr: null },
+                history: windHistory,
+                records: recordsWind,
+                isWindStation: true
+              });
+            }
+
+            if (Array.isArray(apiData.stations_proches)) {
+              apiData.stations_proches.slice(0, 8).forEach(sp => {
+                if (sp.code !== stRain.code && (!stWind || sp.code !== stWind.code)) {
+                  const rec = stationRecordsService.getRecords(sp.code, sp.nom, sp.dept || dept);
+                  results.push({
+                    id: sp.code,
+                    name: sp.nom,
+                    distance: sp.dist_km,
+                    alt: sp.alt || 30,
+                    obs: {
+                      date: targetDateStr,
+                      rr: sp.has_rain_temp ? primarySummaryObs.rr : null,
+                      fxi: sp.has_wind ? primarySummaryObs.fxi : null,
+                      tn: sp.has_rain_temp ? primarySummaryObs.tn : null,
+                      tx: sp.has_rain_temp ? primarySummaryObs.tx : null,
+                      tampli: primarySummaryObs.tampli
+                    },
+                    history: primaryHistory,
+                    records: rec
+                  });
+                }
+              });
+            }
+
+            apiLoaded = true;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[WeatherAnalysisView] Relais API indisponible, repli boucle station:', apiErr);
+      }
+
+      if (!apiLoaded) for (let i = 0; i < selected.length; i++) {
         const st = selected[i];
         setProgressMsg(`Récupération ${st.name} (${i + 1}/${selected.length})…`);
         
@@ -148,7 +270,7 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
 
       // Fallback vent : si aucune station du rayon n'a mesuré le vent (fxi = null)
       // et que c'est un sinistre vent/orage, on ajoute la station la plus proche hors rayon
-      const needsWind = /tempête|vent|orage|rafale|grêle|grele/i.test(claimType);
+      const needsWind = !apiLoaded && /tempête|vent|orage|rafale|grêle|grele/i.test(claimType);
       const hasWindData = results.some(r => r.obs?.fxi != null);
       if (needsWind && !hasWindData) {
         const alreadyIds = results.map(r => r.id);

@@ -43,6 +43,32 @@ export const meteoFranceClimService = {
     if (safeEnd > yesterday) safeEnd = yesterday;
     if (safeStart > safeEnd) safeStart = safeEnd;
 
+    // 1. Relais serveur /api/dpclim/observations (garantit les droits, la déduplication et contourne le blocage navigateur)
+    try {
+      onProgress(`Interrogation officielle Météo-France DPClim pour ${normId}…`);
+      const apiResp = await fetch(`/api/dpclim/observations?station=${encodeURIComponent(normId)}&start=${encodeURIComponent(safeStart)}&end=${encodeURIComponent(safeEnd)}`);
+      if (apiResp.ok) {
+        const json = await apiResp.json();
+        if (json.success && Array.isArray(json.observations) && json.observations.length > 0) {
+          return json.observations.map(obs => ({
+            date: obs.date,
+            rr: obs.pluie != null ? obs.pluie : 0.0,
+            tn: obs.tmin,
+            tx: obs.tmax,
+            tm: (obs.tmin != null && obs.tmax != null) ? Math.round(((obs.tmin + obs.tmax) / 2) * 10) / 10 : null,
+            tampli: (obs.tmin != null && obs.tmax != null) ? Math.round(Math.abs(obs.tmax - obs.tmin) * 10) / 10 : null,
+            fxi: obs.ventMax,
+            gust: obs.ventMax,
+            hxi: '',
+            ff: obs.ventMax ? Math.round(obs.ventMax * 0.6) : null
+          }));
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[meteoFranceClimService] Relais API serveur indisponible, tentative directe navigateur:', apiErr);
+    }
+
+    // 2. Appel direct navigateur de secours
     try {
       let token = await meteoAuth.getValidToken();
       const deb = safeStart + 'T00:00:00Z';
