@@ -14,6 +14,7 @@ import { stationRecordsService } from '../../services/stationRecordsService';
 import { stationSelectorService } from '../../services/stationSelectorService';
 import { vigilanceArchiveService } from '../../services/vigilanceArchiveService';
 import { pdfGeneratorService } from '../../services/pdfGeneratorService';
+import { supabase } from '../../services/supabaseClient';
 
 export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }) {
   const [loading, setLoading] = useState(true);
@@ -160,27 +161,115 @@ export default function WeatherAnalysisView({ dossier, onBack, onUpdateDossier }
             }
 
             if (Array.isArray(apiData.stations_proches)) {
-              apiData.stations_proches.slice(0, 8).forEach(sp => {
-                if (sp.code !== stRain.code && (!stWind || sp.code !== stWind.code)) {
-                  const rec = stationRecordsService.getRecords(sp.code, sp.nom, sp.dept || dept);
-                  results.push({
-                    id: sp.code,
-                    name: sp.nom,
-                    distance: sp.dist_km,
-                    alt: sp.alt || 30,
-                    obs: {
-                      date: targetDateStr,
-                      rr: sp.has_rain_temp ? primarySummaryObs.rr : null,
-                      fxi: sp.has_wind ? primarySummaryObs.fxi : null,
-                      tn: sp.has_rain_temp ? primarySummaryObs.tn : null,
-                      tx: sp.has_rain_temp ? primarySummaryObs.tx : null,
-                      tampli: primarySummaryObs.tampli
-                    },
-                    history: primaryHistory,
-                    records: rec
-                  });
+              // Filtrer strictement les stations dans un rayon de 30 km (exclut les postes à 60+ km)
+              const nearbyCandidates = apiData.stations_proches
+                .filter(sp => sp.dist_km <= 30.0 && sp.code !== stRain.code && (!stWind || sp.code !== stWind.code))
+                .slice(0, 6);
+
+              // Récupérer les vraies données certifiées individuelles depuis Supabase daily_summaries
+              let nearbyDailyMap = {};
+              try {
+                const candidateCodes = nearbyCandidates.map(sp => sp.code);
+                if (supabase && candidateCodes.length > 0) {
+                  const { data: sumRows } = await supabase
+                    .from('daily_summaries')
+                    .select('station_id, temp_min, temp_max, wind_gust_max, wind_mean_max, wind_gust_time, rain_total')
+                    .in('station_id', candidateCodes)
+                    .eq('date', targetDateStr);
+                  if (sumRows && sumRows.length > 0) {
+                    sumRows.forEach(r => { nearbyDailyMap[r.station_id] = r; });
+                  }
                 }
-              });
+              } catch (eSum) {
+                console.warn('[WeatherAnalysisView] Supabase daily_summaries lookup failed:', eSum);
+              }
+
+              for (const sp of nearbyCandidates) {
+                const sum = nearbyDailyMap[sp.code];
+                const rec = stationRecordsService.getRecords(sp.code, sp.nom, sp.dept || dept);
+
+                let spObs = null;
+                let spHistory = [];
+
+                if (sum && !isPeriod) {
+                  const fxiVal = sum.wind_gust_max !== null ? Math.round(Number(sum.wind_gust_max)) : null;
+                  const rrVal = sum.rain_total !== null ? Number(sum.rain_total) : (sp.has_rain_temp ? 0.0 : null);
+                  const tnVal = sum.temp_min !== null ? Number(sum.temp_min) : null;
+                  const txVal = sum.temp_max !== null ? Number(sum.temp_max) : null;
+                  const hxiStr = sum.wind_gust_time ? new Date(sum.wind_gust_time).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+
+                  spObs = {
+                    date: targetDateStr,
+                    rr: rrVal,
+                    fxi: fxiVal,
+                    hxi: hxiStr,
+                    maxGustDate: targetDateStr,
+                    tn: tnVal,
+                    tx: txVal,
+                    tampli: (tnVal !== null && txVal !== null) ? Math.round(Math.abs(txVal - tnVal) * 10) / 10 : null
+                  };
+                  spHistory = [{
+                    date: targetDateStr,
+                    rr: rrVal,
+                    fxi: fxiVal,
+                    hxi: hxiStr,
+                    tn: tnVal,
+                    tx: txVal,
+                    ff: fxiVal ? Math.round(fxiVal * 0.6) : null
+                  }];
+                } else {
+                  try {
+                    const hist = await meteoFranceClimService.fetchStationHistory(sp.code, start, end);
+                    if (hist && hist.length > 0) {
+                      spHistory = hist;
+                      let tRain = 0, mGust = null, mGustH = '', mGustD = '', mTn = null, mTx = null;
+                      hist.forEach(d => {
+                        if (d.rr != null) tRain += d.rr;
+                        if (d.fxi != null && (mGust === null || d.fxi > mGust)) {
+                          mGust = d.fxi; mGustH = d.hxi; mGustD = d.date;
+                        }
+                        if (d.tn != null && (mTn === null || d.tn < mTn)) mTn = d.tn;
+                        if (d.tx != null && (mTx === null || d.tx > mTx)) mTx = d.tx;
+                      });
+                      spObs = {
+                        date: isPeriod ? `${start} au ${end}` : targetDateStr,
+                        rr: tRain > 0 ? Math.round(tRain * 10) / 10 : 0.0,
+                        fxi: mGust,
+                        hxi: mGustH,
+                        maxGustDate: mGustD,
+                        tn: mTn,
+                        tx: mTx,
+                        tampli: (mTn !== null && mTx !== null) ? Math.round(Math.abs(mTx - mTn) * 10) / 10 : null
+                      };
+                    }
+                  } catch (eH) {
+                    console.warn(`[WeatherAnalysisView] Erreur fetch station ${sp.nom}:`, eH);
+                  }
+                }
+
+                if (!spObs) {
+                  spObs = {
+                    date: targetDateStr,
+                    rr: sp.has_rain_temp ? 0.0 : null,
+                    fxi: null,
+                    hxi: '',
+                    maxGustDate: '',
+                    tn: null,
+                    tx: null,
+                    tampli: null
+                  };
+                }
+
+                results.push({
+                  id: sp.code,
+                  name: sp.nom,
+                  distance: sp.dist_km,
+                  alt: sp.alt || 30,
+                  obs: spObs,
+                  history: spHistory,
+                  records: rec
+                });
+              }
             }
 
             apiLoaded = true;

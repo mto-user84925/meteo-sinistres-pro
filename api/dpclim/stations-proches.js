@@ -65,11 +65,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2. Filtre optionnel par département ciblé (ou région ciblée)
-    if (dept && typeof dept === 'string' && dept.trim()) {
+    // 2. Filtre optionnel par département ciblé (uniquement si coordonnées GPS non spécifiées)
+    const hasGps = Boolean(req.query.lat && req.query.lon && !isNaN(targetLat) && !isNaN(targetLon));
+    if (!hasGps && dept && typeof dept === 'string' && dept.trim()) {
       const cleanDept = dept.trim().padStart(2, '0');
       const deptMatches = candidates.filter((s) => s.d === cleanDept);
-      // Si des stations existent dans ce département, on les utilise en priorité
       if (deptMatches.length > 0) {
         candidates = deptMatches;
       }

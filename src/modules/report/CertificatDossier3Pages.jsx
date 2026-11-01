@@ -26,7 +26,7 @@ export default function CertificatDossier3Pages({
 
   // Primary reference station (index 0) and comparison stations (up to 4)
   const primaryStation = stationsData[0] || {};
-  const comparisonStations = stationsData.slice(0, 4);
+  const comparisonStations = (stationsData.filter(st => st.distance <= 30.0).length > 0 ? stationsData.filter(st => st.distance <= 30.0) : stationsData).slice(0, 5);
 
   // SVG Chart Generators for Page 3
   const renderWindSvg = (hours) => {

@@ -266,8 +266,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // 2. Filtre par département ciblé (ou région ciblée)
-    if (dept && typeof dept === 'string' && dept.trim()) {
+    // 2. Filtre par département UNIQUEMENT si les coordonnées GPS ne sont pas renseignées
+    const hasGps = Boolean(req.query.lat && req.query.lon && !isNaN(targetLat) && !isNaN(targetLon));
+    if (!hasGps && dept && typeof dept === 'string' && dept.trim()) {
       const cleanDept = dept.trim().padStart(2, '0');
       const deptMatches = candidates.filter((s) => s.d === cleanDept);
       if (deptMatches.length > 0) {
@@ -290,7 +291,9 @@ export default async function handler(req, res) {
       };
     });
     ranked.sort((a, b) => a.dist_km - b.dist_km);
-    const closest = ranked.slice(0, 15);
+    // Filtrer strictement les stations dans un rayon de 30 km (avec repli si zone isolée)
+    const closestWithin30 = ranked.filter((s) => s.dist_km <= 30.0).slice(0, 8);
+    const closest = closestWithin30.length >= 2 ? closestWithin30 : ranked.slice(0, 5);
 
     // 4. Sélection de la station de référence (pluie/température et vent)
     let stRainTemp = ranked.find((s) => s.has_rain_temp) || ranked[0] || {
@@ -304,11 +307,10 @@ export default async function handler(req, res) {
     let stWind = stRainTemp.has_wind ? stRainTemp : (ranked.find((s) => s.has_wind) || stRainTemp);
     let isDual = stRainTemp.code !== stWind.code;
 
-    // Si une station explicite est demandée, vérifier qu'elle correspond bien au département du chantier
+    // Si une station explicite est demandée par son code, la sélectionner sans restriction de frontière
     if (station) {
       const explicit = all.find((s) => s.c === station);
-      const cleanDept = dept ? dept.trim().padStart(2, '0') : null;
-      if (explicit && (!cleanDept || explicit.d === cleanDept)) {
+      if (explicit) {
         const info = getDeptInfo(explicit.d);
         stRainTemp = {
           code: explicit.c,
